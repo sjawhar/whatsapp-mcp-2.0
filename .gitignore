@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js.map
+*.d.ts
+!src/**
+
+# WhatsApp authentication credentials (CRITICAL - never commit)
+auth_info/
+auth_info_baileys/
+auth_info_multi/
+
+# Downloaded media
+downloads/
+
+# Imported phone contacts (sensitive personal data)
+contacts/
+
+# Persistent message store (contains private chat data)
+store/
+*.db
+*.db-wal
+*.db-shm
+
+# Environment variables and secrets
+.env
+.env.*
+.env.local
+.env.production
+
+# Private keys and certificates
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+
+# Credentials files
+credentials*
+secrets*
+tokens*
+*.token
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*

@@ -1,0 +1,865 @@
+import makeWASocket, {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  downloadMediaMessage,
+  getContentType,
+  initAuthCreds,
+  BufferJSON,
+  proto,
+} from "@whiskeysockets/baileys";
+import type { WASocket, AuthenticationCreds, AuthenticationState, SignalDataTypeMap } from "@whiskeysockets/baileys";
+import { Boom } from "@hapi/boom";
+import pino from "pino";
+import fs from "fs";
+import path from "path";
+import {
+  toJid,
+  fromJid,
+  mimeFromExtension,
+  mediaCategoryFromMime,
+} from "./utils.js";
+import * as db from "./db.js";
+import { transcribeAudio } from "./transcribe.js";
+
+const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const AUTH_DIR = path.join(__project_root, "auth_info");
+const DOWNLOADS_DIR = path.join(__project_root, "downloads");
+
+const logger = pino(
+  { level: "warn" },
+  pino.destination({ dest: 2, sync: false })
+);
+
+// ─── Atomic Multi-File Auth State ───────────────────────────────────
+// Custom replacement for Baileys' useMultiFileAuthState that uses atomic
+// writes (write-to-temp + rename) to prevent JSON corruption from
+// concurrent writes during app state sync. The built-in implementation
+// uses plain writeFile which can produce corrupted files when two events
+// write to the same key file in quick succession.
+
+let pendingWrites = new Set<Promise<void>>();
+
+function trackWrite(p: Promise<void>): Promise<void> {
+  pendingWrites.add(p);
+  p.finally(() => pendingWrites.delete(p));
+  return p;
+}
+
+async function flushPendingWrites(): Promise<void> {
+  if (pendingWrites.size > 0) {
+    console.error(`Flushing ${pendingWrites.size} pending auth write(s)...`);
+    await Promise.allSettled([...pendingWrites]);
+  }
+}
+
+const fixFileName = (file: string) => file?.replace(/\//g, "__")?.replace(/:/g, "-");
+
+async function atomicWrite(filePath: string, data: string): Promise<void> {
+  const tmpPath = filePath + ".tmp." + process.pid;
+  await fs.promises.writeFile(tmpPath, data);
+  await fs.promises.rename(tmpPath, filePath);
+}
+
+async function useAtomicMultiFileAuthState(folder: string): Promise<{
+  state: AuthenticationState;
+  saveCreds: () => Promise<void>;
+}> {
+  await fs.promises.mkdir(folder, { recursive: true });
+
+  const writeData = async (data: any, file: string): Promise<void> => {
+    const filePath = path.join(folder, fixFileName(file));
+    await atomicWrite(filePath, JSON.stringify(data, BufferJSON.replacer));
+  };
+
+  const readData = async (file: string): Promise<any> => {
+    try {
+      const filePath = path.join(folder, fixFileName(file));
+      const raw = await fs.promises.readFile(filePath, { encoding: "utf-8" });
+      return JSON.parse(raw, BufferJSON.reviver);
+    } catch {
+      return null;
+    }
+  };
+
+  const removeData = async (file: string): Promise<void> => {
+    try {
+      await fs.promises.unlink(path.join(folder, fixFileName(file)));
+    } catch {}
+  };
+
+  const creds: AuthenticationCreds = (await readData("creds.json")) || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async <T extends keyof SignalDataTypeMap>(type: T, ids: string[]) => {
+          const data: { [id: string]: SignalDataTypeMap[T] } = {};
+          await Promise.all(
+            ids.map(async (id) => {
+              let value = await readData(`${type}-${id}.json`);
+              if (type === "app-state-sync-key" && value) {
+                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+              }
+              if (value) {
+                data[id] = value;
+              }
+            })
+          );
+          return data;
+        },
+        set: async (data: any) => {
+          const tasks: Promise<void>[] = [];
+          for (const category in data) {
+            for (const id in data[category]) {
+              const value = data[category][id];
+              const file = `${category}-${id}.json`;
+              tasks.push(value ? writeData(value, file) : removeData(file));
+            }
+          }
+          await Promise.all(tasks);
+        },
+      },
+    },
+    saveCreds: () => writeData(creds, "creds.json"),
+  };
+}
+
+// ─── Connection State ───────────────────────────────────────────────
+
+let sock: WASocket | null = null;
+let connectionReady: Promise<void>;
+let resolveConnection: () => void;
+let rejectConnection: (err: Error) => void;
+let reconnectAttempts = 0;
+
+// ─── User Identity ──────────────────────────────────────────────────
+
+let myJid: string | null = null;
+let myName: string | null = null;
+let myLidJid: string | null = null;
+
+export function getMyInfo(): { jid: string | null; lidJid: string | null; name: string | null; phone: string | null } {
+  const normalizedJid = myJid ? myJid.replace(/:\d+@/, "@") : null;
+  return {
+    jid: normalizedJid,
+    lidJid: myLidJid,
+    name: myName || "You",
+    phone: normalizedJid ? fromJid(normalizedJid) : null,
+  };
+}
+
+function resetConnectionPromise() {
+  connectionReady = new Promise<void>((resolve, reject) => {
+    resolveConnection = resolve;
+    rejectConnection = reject;
+  });
+}
+
+resetConnectionPromise();
+
+/**
+ * Mark connection as ready without connecting to WhatsApp.
+ * Used when another instance owns the connection and this one reads from SQLite only.
+ */
+export function resolveConnectionAsReadOnly(): void {
+  resolveConnection();
+}
+
+/**
+ * Initialize the Baileys WhatsApp client.
+ * QR codes are printed to stderr so they don't interfere with MCP stdio.
+ */
+export async function initWhatsApp(): Promise<void> {
+  if (sock) {
+    await flushPendingWrites();
+    (sock.ev as any).removeAllListeners();
+    sock.end(undefined);
+    sock = null;
+  }
+
+  const { state, saveCreds } = await useAtomicMultiFileAuthState(AUTH_DIR);
+  const { version } = await fetchLatestBaileysVersion();
+
+  // Only request full history sync on first pairing (when no creds exist yet).
+  // On reconnections, history won't be sent by WhatsApp anyway, and requesting
+  // it causes Baileys to enter AwaitingInitialSync for 20s before timing out —
+  // which leads to 408 disconnects and an endless reconnect loop.
+  const isFirstPairing = !state.creds.registered;
+
+  // Wrap keys.set so every auth-state write is tracked and can be awaited
+  // before socket close — preventing stale session files on disk.
+  const originalKeysSet = state.keys.set.bind(state.keys);
+  state.keys.set = (data: Parameters<typeof originalKeysSet>[0]) => {
+    const result = originalKeysSet(data);
+    // keys.set returns Awaitable<void> — may be sync or async
+    if (result && typeof (result as any).then === "function") {
+      const p = (result as Promise<void>).catch((err: Error) => {
+        console.error("Auth key write failed:", err);
+      });
+      return trackWrite(p);
+    }
+    return result;
+  };
+
+  const trackedSaveCreds = () => trackWrite(saveCreds());
+
+  sock = makeWASocket({
+    version,
+    auth: state,
+    logger,
+    printQRInTerminal: false,
+    browser: ["WhatsApp MCP", "Chrome", "1.0.0"],
+    generateHighQualityLinkPreview: false,
+    syncFullHistory: isFirstPairing,
+    shouldSyncHistoryMessage: () => isFirstPairing,
+  });
+
+  // ─── Bind events ──────────────────────────────────────────
+  //
+  // CRITICAL: We must use sock.ev.process() instead of individual sock.ev.on()
+  // listeners. Baileys buffers events during history sync and flushes them as a
+  // consolidated map via the internal 'event' emitter. Individual .on() listeners
+  // only receive unbuffered events and will MISS the entire history sync payload.
+  // sock.ev.process() is the correct API that receives both buffered and unbuffered events.
+
+  sock.ev.on("creds.update", trackedSaveCreds);
+
+  sock.ev.process(async (events) => {
+    // ─── Connection Updates ─────────────────────────────────
+    if (events["connection.update"]) {
+      const { connection, lastDisconnect, qr } = events["connection.update"];
+
+      if (qr) {
+        console.error("\n=== Scan this QR code in WhatsApp ===");
+        console.error("Link a device > QR code\n");
+        printQrToStderr(qr);
+      }
+
+      if (connection === "close") {
+        const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+        const shouldReconnect =
+          statusCode !== DisconnectReason.loggedOut &&
+          statusCode !== DisconnectReason.connectionReplaced;
+
+        console.error(`Connection closed. Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+
+        if (statusCode === DisconnectReason.connectionReplaced) {
+          console.error(
+            "Connection replaced by another session. " +
+            "If this keeps happening, delete auth_info/ and re-scan the QR code."
+          );
+          rejectConnection(new Error("Connection replaced by another session."));
+        } else if (shouldReconnect) {
+          reconnectAttempts++;
+          const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000);
+          console.error(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
+          resetConnectionPromise();
+          setTimeout(() => initWhatsApp(), delay);
+        } else {
+          rejectConnection(new Error("Logged out from WhatsApp. Delete auth_info/ and re-scan QR."));
+        }
+      }
+
+      if (connection === "open") {
+        console.error("WhatsApp connected successfully!");
+        reconnectAttempts = 0;
+
+        if (sock?.user) {
+          myJid = sock.user.id;
+          myName = sock.user.name || null;
+          myLidJid = (sock.user as any).lid || null;
+          // Normalize JID: strip device suffix (e.g. "971525527198:5@s.whatsapp.net" → "971525527198@s.whatsapp.net")
+          const normalizedJid = myJid.replace(/:\d+@/, "@");
+          const displayName = myName || "You";
+          console.error(`Authenticated as: ${displayName} (${normalizedJid}${myLidJid ? `, LID: ${myLidJid}` : ""})`);
+          // Store our own identity so our chat shows a name, not a number
+          db.upsertContact(normalizedJid, displayName, myName);
+          db.upsertChat(normalizedJid, displayName, null, null);
+          // Store LID ↔ phone mapping for our own account
+          if (myLidJid) {
+            db.saveJidMapping(myLidJid, normalizedJid);
+            db.upsertContact(myLidJid, displayName, myName);
+            db.upsertChat(myLidJid, displayName, null, null);
+          }
+        }
+
+        console.error("Connection ready");
+        resolveConnection();
+      }
+    }
+
+    // ─── History Sync (bulk load after QR scan) ─────────────
+    if (events["messaging-history.set"]) {
+      const { chats: syncChats, contacts: syncContacts, messages: syncMessages } = events["messaging-history.set"];
+      const progress = (events["messaging-history.set"] as any).progress;
+      const syncType = (events["messaging-history.set"] as any).syncType;
+
+      console.error(`History sync: ${syncChats.length} chats, ${syncContacts.length} contacts, ${syncMessages.length} messages (type=${syncType} progress=${progress ?? "?"}%)`);
+
+      db.upsertChats(syncChats as any[]);
+      db.upsertContacts(syncContacts as any[]);
+
+      // Propagate contact names (push names) to the chats table so chat
+      // listings show names immediately. The push_name sync (type 4)
+      // delivers ~1000 contacts with notify fields — without this step
+      // those names only exist in the contacts table and require a JOIN.
+      // Also extract LID ↔ phone JID mappings from synced contacts.
+      for (const contact of syncContacts as any[]) {
+        const displayName = contact.name || contact.notify || contact.verifiedName;
+        if (displayName && contact.id) {
+          db.upsertChat(contact.id, displayName, null, null);
+        }
+        // Extract LID ↔ phone mapping
+        const cLid = contact.lid || (contact.id?.endsWith?.("@lid") ? contact.id : null);
+        const cPhone = contact.jid || (contact.id?.endsWith?.("@s.whatsapp.net") ? contact.id : null);
+        if (cLid && cPhone) {
+          db.saveJidMapping(cLid, cPhone);
+        }
+      }
+
+      // Group messages by chat JID and batch-insert
+      const byJid = new Map<string, any[]>();
+      for (const msg of syncMessages) {
+        const jid = msg.key.remoteJid;
+        if (!jid) continue;
+        if (!byJid.has(jid)) byJid.set(jid, []);
+        byJid.get(jid)!.push(msg);
+      }
+      for (const [jid, msgs] of byJid) {
+        db.upsertMessages(jid, msgs);
+        if (msgs.length > 0) {
+          const latest = msgs[msgs.length - 1];
+          db.upsertChat(jid, null, Number(latest.messageTimestamp || 0), 0);
+        }
+      }
+    }
+
+    // ─── Chat Events ────────────────────────────────────────
+    if (events["chats.upsert"]) {
+      db.upsertChats(events["chats.upsert"] as any[]);
+    }
+
+    if (events["chats.update"]) {
+      for (const update of events["chats.update"]) {
+        if (!update.id) continue;
+        db.upsertChat(update.id, (update as any).name, (update as any).conversationTimestamp ? Number((update as any).conversationTimestamp) : null, (update as any).unreadCount);
+      }
+    }
+
+    if (events["chats.delete"]) {
+      for (const id of events["chats.delete"]) {
+        db.deleteChat(id);
+      }
+    }
+
+    // ─── LID ↔ Phone JID Mapping ────────────────────────────
+    if (events["chats.phoneNumberShare"]) {
+      const { lid, jid } = events["chats.phoneNumberShare"];
+      if (lid && jid) {
+        db.saveJidMapping(lid, jid);
+      }
+    }
+
+    // ─── Contact Events ─────────────────────────────────────
+    if (events["contacts.upsert"]) {
+      const contacts = events["contacts.upsert"];
+      db.upsertContacts(contacts as any[]);
+      for (const contact of contacts) {
+        const name = contact.name || contact.notify;
+        if (name) {
+          // Store under the primary id
+          db.upsertChat(contact.id, name, null, null);
+          // ContactAction from app state sync may use LID as id but provide
+          // the phone-number JID in the jid field — store under that too
+          const phoneJid = (contact as any).jid;
+          if (phoneJid && phoneJid !== contact.id) {
+            db.upsertContact(phoneJid, contact.name || null, contact.notify || null);
+            db.upsertChat(phoneJid, name, null, null);
+          }
+        }
+
+        // Extract LID ↔ phone JID mapping from Contact object.
+        // Baileys Contact type has: id (primary), lid? (@lid), jid? (@s.whatsapp.net)
+        const cLid = (contact as any).lid || (contact.id.endsWith("@lid") ? contact.id : null);
+        const cPhone = (contact as any).jid || (contact.id.endsWith("@s.whatsapp.net") ? contact.id : null);
+        if (cLid && cPhone) {
+          db.saveJidMapping(cLid, cPhone);
+        }
+      }
+    }
+
+    if (events["contacts.update"]) {
+      for (const update of events["contacts.update"]) {
+        if (!update.id) continue;
+        db.upsertContact(update.id, (update as any).name, (update as any).notify);
+        const updatedName = (update as any).name || (update as any).notify;
+        if (updatedName) {
+          db.upsertChat(update.id, updatedName, null, null);
+        }
+      }
+    }
+
+    // ─── Message Events ─────────────────────────────────────
+    if (events["messages.upsert"]) {
+      const { messages: newMsgs } = events["messages.upsert"];
+      for (const msg of newMsgs) {
+        const jid = msg.key.remoteJid;
+        if (!jid) continue;
+
+        // pushName is the sender's WhatsApp display name — use it to populate contacts
+        const pushName = (msg as any).pushName;
+        const senderJid = msg.key.fromMe ? null : (msg.key.participant || jid);
+        if (pushName && senderJid) {
+          db.upsertContact(senderJid, null, pushName);
+        }
+
+        db.upsertMessage(jid, msg);
+        const msgTs = Number(msg.messageTimestamp || 0);
+        const chatName = (!msg.key.fromMe && !jid.endsWith("@g.us") && pushName) ? pushName : null;
+        db.upsertChat(jid, chatName, msgTs, msg.key.fromMe ? null : undefined);
+      }
+    }
+
+    if (events["messages.update"]) {
+      for (const { key, update } of events["messages.update"]) {
+        const jid = key.remoteJid;
+        if (!jid || !key.id) continue;
+        const merged = { key, message: (update as any).message, messageTimestamp: (update as any).messageTimestamp, participant: (update as any).participant };
+        if (merged.message) {
+          db.upsertMessage(jid, merged as any);
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Cleanly close the WhatsApp connection.
+ */
+export async function closeWhatsApp(): Promise<void> {
+  if (sock) {
+    await flushPendingWrites();
+    (sock.ev as any).removeAllListeners();
+    sock.end(undefined);
+    sock = null;
+  }
+}
+
+/**
+ * Resolve a chat name. For groups without a name, fetch metadata from WhatsApp.
+ * Like the Go project's GetChatName — resolve inline when needed.
+ */
+async function resolveChatName(jid: string): Promise<string | null> {
+  // Check if we already have a name in the DB
+  const existing = db.getChatName(jid);
+  if (existing) return existing;
+
+  // For groups, try fetching metadata
+  if (jid.endsWith("@g.us") && sock) {
+    try {
+      const meta = await sock.groupMetadata(jid);
+      if (meta.subject) {
+        db.upsertChat(jid, meta.subject, null, null);
+        return meta.subject;
+      }
+    } catch {
+      // Group may no longer exist or we're not a member
+    }
+  }
+
+  // For individual chats, try contact store
+  if (jid.endsWith("@s.whatsapp.net")) {
+    const contact = db.getContactName(jid);
+    if (contact) {
+      db.upsertChat(jid, contact, null, null);
+      return contact;
+    }
+  }
+
+  return null;
+}
+
+async function getSocket(): Promise<WASocket> {
+  // During reconnection cycles, sock may be momentarily null while a new
+  // socket is being created. Re-await connectionReady to wait for it.
+  if (!sock) {
+    await connectionReady;
+  }
+  if (!sock) throw new Error(
+    "WhatsApp socket not available. This instance is running in read-only mode " +
+    "(another MCP server process owns the WhatsApp connection). " +
+    "This operation requires an active WhatsApp connection. Try restarting Claude Desktop, " +
+    "or delete the lock file at store/.whatsapp.lock if the other process is dead."
+  );
+  return sock;
+}
+
+/**
+ * Return the socket if available, or null if running in read-only mode.
+ * Used by media download functions that can work without a socket —
+ * the socket is only needed as a fallback to re-upload expired CDN URLs.
+ */
+function getSocketOrNull(): WASocket | null {
+  return sock;
+}
+
+// ─── Reading Functions ──────────────────────────────────────────────
+
+export async function getChats(nameFilter?: string): Promise<Record<string, unknown>[]> {
+  await connectionReady;
+  const chats = db.getChats(nameFilter);
+
+  // Resolve names for any chats missing them (like the Go project does inline)
+  for (const chat of chats) {
+    if (!chat.name && typeof chat.jid === "string") {
+      const name = await resolveChatName(chat.jid);
+      if (name) chat.name = name;
+    }
+  }
+
+  return chats;
+}
+
+export async function getChat(jid: string): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const normalJid = toJid(jid);
+  const chat = db.getChat(normalJid);
+
+  // Resolve name if missing
+  if (chat && !chat.name) {
+    const name = await resolveChatName(normalJid);
+    if (name) chat.name = name;
+  }
+
+  return chat;
+}
+
+export async function getMessages(jid: string, limit: number = 50): Promise<Record<string, unknown>[]> {
+  await connectionReady;
+  return db.getMessages(toJid(jid), limit);
+}
+
+export async function searchMessages(query: string, jid?: string): Promise<Record<string, unknown>[]> {
+  await connectionReady;
+  return db.searchMessages(query, jid ? toJid(jid) : undefined);
+}
+
+export async function searchContacts(query: string): Promise<Record<string, unknown>[]> {
+  await connectionReady;
+  return db.searchContacts(query);
+}
+
+export async function getMessageContext(jid: string, messageId: string, count: number = 5): Promise<Record<string, unknown>> {
+  await connectionReady;
+  return db.getMessageContext(toJid(jid), messageId, count);
+}
+
+// ─── Contact Management ─────────────────────────────────────────────
+
+export async function updateContact(jid: string, name: string): Promise<Record<string, unknown>> {
+  const normalJid = toJid(jid);
+  db.upsertContact(normalJid, name, null);
+  db.upsertChat(normalJid, name, null, null);
+  return { success: true, jid: normalJid, name };
+}
+
+// ─── Writing Functions ──────────────────────────────────────────────
+
+export async function deleteChat(jid: string): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const s = await getSocket();
+  const normalJid = toJid(jid);
+
+  const lastMsg = db.getLastMessageKey(normalJid);
+  if (!lastMsg) {
+    throw new Error(`No messages found in chat ${normalJid} — cannot delete an empty chat.`);
+  }
+
+  try {
+    await s.chatModify(
+      {
+        delete: true,
+        lastMessages: [{
+          key: {
+            remoteJid: normalJid,
+            fromMe: lastMsg.fromMe,
+            id: lastMsg.id,
+          },
+          messageTimestamp: lastMsg.timestamp,
+        }],
+      },
+      normalJid
+    );
+  } catch (err: any) {
+    if (err.message?.includes("not present")) {
+      throw new Error(
+        "WhatsApp app state keys haven't synced yet. " +
+        "This happens on fresh installs — wait a few minutes and try again, or restart the server."
+      );
+    }
+    throw err;
+  }
+
+  // Clean up local database
+  db.deleteChatMessages(normalJid);
+  db.deleteChat(normalJid);
+
+  return { success: true, jid: normalJid };
+}
+
+export async function deleteMessage(jid: string, messageId: string): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const s = await getSocket();
+  const normalJid = toJid(jid);
+
+  // Look up from_me to build the correct WAMessageKey for deletion
+  const fromMe = db.getMessageFromMe(normalJid, messageId);
+  if (fromMe === null) {
+    throw new Error(`Message ${messageId} not found in chat ${normalJid}`);
+  }
+
+  // Delete on WhatsApp servers first — if this fails, local DB stays intact
+  await s.sendMessage(normalJid, {
+    delete: {
+      remoteJid: normalJid,
+      fromMe,
+      id: messageId,
+    },
+  });
+
+  // Remove from local database
+  db.deleteMessage(normalJid, messageId);
+
+  return { success: true, jid: normalJid, messageId };
+}
+
+export function getRecipientInfo(jid: string): { jid: string; name: string | null; phone: string } {
+  const normalJid = toJid(jid);
+  const name = db.getContactName(normalJid);
+  const phone = fromJid(normalJid);
+  return { jid: normalJid, name, phone };
+}
+
+const DNCR_MESSAGE = `This is unsolicited marketing. My number is on the UAE Do Not Call Register (DNCR).
+
+You are in violation of Cabinet Resolution No. 56/2024. Penalties under Resolution 57/2024 range from AED 10,000 to AED 150,000, including suspension and licence cancellation.
+
+I will be reporting this to the TDRA and filing a complaint with the Ministry of Economy to investigate how your organisation obtained my personal number without consent, which is a separate violation of UAE data protection law.
+
+Do not contact me again.`;
+
+export function getDncrMessage(): string {
+  return DNCR_MESSAGE;
+}
+
+export async function sendDncrReply(jid: string): Promise<Record<string, unknown>> {
+  return sendTextMessage(jid, DNCR_MESSAGE);
+}
+
+export async function sendTextMessage(jid: string, text: string): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const s = await getSocket();
+  const normalJid = toJid(jid);
+
+  const sent = await s.sendMessage(normalJid, { text });
+  return {
+    success: true,
+    messageId: sent?.key.id,
+    to: normalJid,
+  };
+}
+
+export async function sendFileMessage(
+  jid: string,
+  filePath: string,
+  caption?: string
+): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const s = await getSocket();
+  const normalJid = toJid(jid);
+
+  const absolutePath = path.resolve(filePath);
+  if (!fs.existsSync(absolutePath)) {
+    throw new Error(`File not found: ${absolutePath}`);
+  }
+
+  const mime = mimeFromExtension(absolutePath);
+  const category = mediaCategoryFromMime(mime);
+  const buffer = fs.readFileSync(absolutePath);
+  const fileName = path.basename(absolutePath);
+
+  let messageContent: Parameters<typeof s.sendMessage>[1];
+  switch (category) {
+    case "image":
+      messageContent = { image: buffer, caption, mimetype: mime };
+      break;
+    case "video":
+      messageContent = { video: buffer, caption, mimetype: mime };
+      break;
+    case "audio":
+      messageContent = { audio: buffer, mimetype: mime, ptt: false };
+      break;
+    default:
+      messageContent = { document: buffer, mimetype: mime, fileName, caption };
+      break;
+  }
+
+  const sent = await s.sendMessage(normalJid, messageContent);
+  return {
+    success: true,
+    messageId: sent?.key.id,
+    to: normalJid,
+    fileType: category,
+  };
+}
+
+// ─── Media Functions ────────────────────────────────────────────────
+
+export async function downloadMessageMedia(
+  jid: string,
+  messageId: string
+): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const normalJid = toJid(jid);
+
+  const blob = db.getMessageBlob(normalJid, messageId);
+  if (!blob) {
+    throw new Error(`Message ${messageId} not found or has no downloadable media in chat ${normalJid}`);
+  }
+
+  const stored = JSON.parse(blob);
+  if (!stored.message) {
+    throw new Error("Message has no content");
+  }
+
+  const s = getSocketOrNull();
+  const buffer = await downloadMediaMessage(
+    stored,
+    "buffer",
+    {},
+    s ? { logger, reuploadRequest: s.updateMediaMessage } : undefined
+  );
+
+  const contentType = getContentType(stored.message);
+  const mediaMsg = stored.message[contentType!];
+  const mimetype: string = mediaMsg?.mimetype || "application/octet-stream";
+  const ext = extensionFromMime(mimetype);
+
+  fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+  const fileName = `${messageId}.${ext}`;
+  const outPath = path.join(DOWNLOADS_DIR, fileName);
+  fs.writeFileSync(outPath, buffer as Buffer);
+
+  return {
+    success: true,
+    filePath: path.resolve(outPath),
+    fileName,
+    mimeType: mimetype,
+    type: contentType,
+    size: (buffer as Buffer).length,
+  };
+}
+
+export async function transcribeVoiceNote(
+  jid: string,
+  messageId: string
+): Promise<Record<string, unknown>> {
+  await connectionReady;
+  const normalJid = toJid(jid);
+
+  // Validate message type
+  const msgType = db.getMessageTypeById(normalJid, messageId);
+  if (!msgType) {
+    throw new Error(`Message ${messageId} not found in chat ${normalJid}`);
+  }
+  if (msgType !== "voice_note" && msgType !== "audio") {
+    throw new Error(
+      `Message ${messageId} is type "${msgType}", not a voice note or audio message.`
+    );
+  }
+
+  // Check cache
+  const cached = db.getTranscription(normalJid, messageId);
+  if (cached) {
+    return {
+      success: true,
+      messageId,
+      chatJid: normalJid,
+      transcription: cached,
+      cached: true,
+    };
+  }
+
+  // Download audio into RAM (no disk write)
+  const blob = db.getMessageBlob(normalJid, messageId);
+  if (!blob) {
+    throw new Error(`Message ${messageId} has no downloadable media`);
+  }
+
+  const stored = JSON.parse(blob);
+  if (!stored.message) {
+    throw new Error("Message has no content");
+  }
+
+  const s = getSocketOrNull();
+  const buffer = await downloadMediaMessage(
+    stored,
+    "buffer",
+    {},
+    s ? { logger, reuploadRequest: s.updateMediaMessage } : undefined
+  );
+
+  const contentType = getContentType(stored.message);
+  const mediaMsg = stored.message[contentType!];
+  const ext = extensionFromMime(mediaMsg?.mimetype || "audio/ogg");
+
+  // Transcribe via Whisper API
+  const result = await transcribeAudio(buffer as Buffer, `${messageId}.${ext}`);
+
+  // Cache in database
+  db.saveTranscription(normalJid, messageId, result.text);
+
+  return {
+    success: true,
+    messageId,
+    chatJid: normalJid,
+    transcription: result.text,
+    language: result.language,
+    duration: result.duration,
+    cached: false,
+  };
+}
+
+function extensionFromMime(mime: string): string {
+  const map: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+    "audio/ogg; codecs=opus": "ogg",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  };
+  return map[mime] || mime.split("/").pop()?.replace(/[^a-z0-9]/g, "") || "bin";
+}
+
+// ─── QR Code Rendering ─────────────────────────────────────────────
+
+function printQrToStderr(qr: string) {
+  // @ts-ignore - qrcode-terminal has no types
+  import("qrcode-terminal").then((mod) => {
+    const QRC = mod.default || mod;
+    QRC.generate(qr, { small: true }, (code: string) => {
+      console.error(code);
+    });
+  }).catch(() => {
+    console.error("QR Data (copy to a QR code generator):");
+    console.error(qr);
+  });
+}

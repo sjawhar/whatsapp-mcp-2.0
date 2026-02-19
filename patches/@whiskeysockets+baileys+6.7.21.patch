@@ -1,0 +1,46 @@
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Signal/Group/queue-job.js b/node_modules/@whiskeysockets/baileys/lib/Signal/Group/queue-job.js
+index b92c76a..da8cbc9 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Signal/Group/queue-job.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Signal/Group/queue-job.js
+@@ -31,7 +31,7 @@ async function _asyncQueueExecutor(queue, cleanup) {
+ export default function queueJob(bucket, awaitable) {
+     // Skip name assignment since it's readonly in strict mode
+     if (typeof bucket !== 'string') {
+-        console.warn('Unhandled bucket type (for naming):', typeof bucket, bucket);
++        // console.warn('Unhandled bucket type (for naming):', typeof bucket, bucket);
+     }
+     let inactive = false;
+     if (!_queueAsyncBuckets.has(bucket)) {
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/history.js b/node_modules/@whiskeysockets/baileys/lib/Utils/history.js
+index def9742..241bee5 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Utils/history.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Utils/history.js
+@@ -74,7 +74,14 @@ export const processHistoryMessage = (item) => {
+     };
+ };
+ export const downloadAndProcessHistorySyncNotification = async (msg, options) => {
+-    const historyMsg = await downloadHistory(msg, options);
++    let historyMsg;
++    if (msg.initialHistBootstrapInlinePayload) {
++        historyMsg = proto.HistorySync.decode(
++            await inflatePromise(msg.initialHistBootstrapInlinePayload)
++        );
++    } else {
++        historyMsg = await downloadHistory(msg, options);
++    }
+     return processHistoryMessage(historyMsg);
+ };
+ export const getHistoryMsg = (message) => {
+diff --git a/node_modules/@whiskeysockets/baileys/lib/WAM/encode.js b/node_modules/@whiskeysockets/baileys/lib/WAM/encode.js
+index c4d73bf..bb9572e 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/WAM/encode.js
++++ b/node_modules/@whiskeysockets/baileys/lib/WAM/encode.js
+@@ -5,7 +5,7 @@ export const encodeWAM = (binaryInfo) => {
+     binaryInfo.buffer = [];
+     encodeWAMHeader(binaryInfo);
+     encodeEvents(binaryInfo);
+-    console.log(binaryInfo.buffer);
++    // console.log(binaryInfo.buffer);
+     const totalSize = binaryInfo.buffer.map(a => a.length).reduce((a, b) => a + b);
+     const buffer = Buffer.alloc(totalSize);
+     let offset = 0;

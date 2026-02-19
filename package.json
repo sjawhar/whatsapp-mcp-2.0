@@ -1,0 +1,29 @@
+{
+  "name": "whatsapp-mcp",
+  "version": "1.0.0",
+  "description": "WhatsApp MCP server built with Baileys",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "postinstall": "patch-package",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "import-contacts": "node dist/import-contacts.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "@whiskeysockets/baileys": "^6.7.16",
+    "better-sqlite3": "^12.6.2",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "patch-package": "^8.0.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.8.0"
+  }
+}
