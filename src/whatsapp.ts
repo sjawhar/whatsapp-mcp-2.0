@@ -10,6 +10,7 @@ import makeWASocket, {
 import type { WASocket, AuthenticationCreds, AuthenticationState, SignalDataTypeMap } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
+import NodeCache from "node-cache";
 import fs from "fs";
 import path from "path";
 import {
@@ -38,6 +39,10 @@ const parsedMaxSendFailures = Number(process.env.MAX_SEND_FAILURES || "3");
 const MAX_SEND_FAILURES = Number.isFinite(parsedMaxSendFailures) && parsedMaxSendFailures > 0
   ? Math.floor(parsedMaxSendFailures)
   : 3;
+
+const PRE_KEY_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const PRE_KEY_MAX_FILES = 500;
+const PRE_KEY_KEEP_FILES = 100;
 
 const logger = pino(
   { level: "warn" },
@@ -148,6 +153,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let zombieWatchdog: ReturnType<typeof setInterval> | null = null;
 let lastConnectionActivity = Date.now();
 let consecutiveSendFailures = 0;
+let preKeyPruneInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── User Identity ──────────────────────────────────────────────────
 
@@ -245,6 +251,23 @@ export async function clearAuthState(): Promise<void> {
   }
 }
 
+async function prunePreKeys(authDir: string): Promise<void> {
+  const files = await fs.promises.readdir(authDir).catch(() => [] as string[]);
+  const preKeyFiles = files.filter(f => f.startsWith('pre-key-') || f.startsWith('sender-key-') || f.startsWith('session-'));
+  if (preKeyFiles.length > PRE_KEY_MAX_FILES) {
+    const withStats = await Promise.all(
+      preKeyFiles.map(async f => ({
+        f,
+        mtime: (await fs.promises.stat(path.join(authDir, f)).catch(() => ({ mtimeMs: 0 }))).mtimeMs,
+      }))
+    );
+    withStats.sort((a, b) => a.mtime - b.mtime);
+    const toDelete = withStats.slice(0, withStats.length - PRE_KEY_KEEP_FILES);
+    await Promise.all(toDelete.map(({ f }) => fs.promises.unlink(path.join(authDir, f)).catch(() => {})));
+    console.error(`Pruned ${toDelete.length} pre-key/session files (${preKeyFiles.length} -> ${PRE_KEY_KEEP_FILES})`);
+  }
+}
+
 export function getReconnectAttempts(): number {
   return reconnectAttempts;
 }
@@ -326,6 +349,14 @@ export function resolveConnectionAsReadOnly(): void {
 export async function initWhatsApp(): Promise<void> {
   clearZombieWatchdog();
 
+  // Prune stale pre-key/session files on startup
+  await prunePreKeys(AUTH_DIR);
+
+  // Schedule periodic pre-key pruning (every 6 hours)
+  if (!preKeyPruneInterval) {
+    preKeyPruneInterval = setInterval(() => void prunePreKeys(AUTH_DIR), PRE_KEY_PRUNE_INTERVAL_MS);
+  }
+
   if (sock) {
     await flushPendingWrites();
     (sock.ev as any).removeAllListeners();
@@ -368,6 +399,10 @@ export async function initWhatsApp(): Promise<void> {
     generateHighQualityLinkPreview: false,
     syncFullHistory: isFirstPairing,
     shouldSyncHistoryMessage: () => isFirstPairing,
+    keepAliveIntervalMs: 25_000,
+    markOnlineOnConnect: false,
+    msgRetryCounterCache: new NodeCache({ stdTTL: 60, maxKeys: 500 }),
+    userDevicesCache: new NodeCache({ stdTTL: 300, maxKeys: 1000 }),
   });
 
   lastConnectionActivity = Date.now();
@@ -582,6 +617,11 @@ export async function initWhatsApp(): Promise<void> {
  */
 export async function closeWhatsApp(): Promise<void> {
   clearZombieWatchdog();
+
+  if (preKeyPruneInterval) {
+    clearInterval(preKeyPruneInterval);
+    preKeyPruneInterval = null;
+  }
 
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);

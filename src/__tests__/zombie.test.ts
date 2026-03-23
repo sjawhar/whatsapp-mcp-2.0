@@ -104,11 +104,13 @@ describe("zombie watchdog + send health check", () => {
     const socket = latestSocket();
     socket.emitConnectionOpen();
 
-    expect(vi.getTimerCount()).toBe(1);
+    const timersAfterOpen = vi.getTimerCount();
+    expect(timersAfterOpen).toBeGreaterThanOrEqual(1); // at least zombie watchdog
 
     socket.emitConnectionClose(428);
 
-    expect(vi.getTimerCount()).toBe(1);
+    // Zombie watchdog cleared (-1), reconnect setTimeout added (+1) → net 0 change
+    expect(vi.getTimerCount()).toBe(timersAfterOpen);
   });
 
   it("forces reconnect after 3 consecutive send failures", async () => {
