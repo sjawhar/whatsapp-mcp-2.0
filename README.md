@@ -1,222 +1,121 @@
-# WhatsApp MCP 2.0
+# WhatsApp MCP Server
 
-A Model Context Protocol (MCP) server that connects to WhatsApp via [Baileys](https://github.com/WhiskeySockets/Baileys), providing AI with the ability to manage WhatsApp.
+A Model Context Protocol (MCP) server that connects to WhatsApp via [Baileys](https://github.com/WhiskeySockets/Baileys), providing AI with the ability to manage WhatsApp. This is a security-hardened fork of [karlfoster/whatsapp-mcp-2.0](https://github.com/karlfoster/whatsapp-mcp-2.0).
 
-![Architecture Diagram](docs/diagram.png)
+## ⚠️ WARNING
 
-## Features
+**This project uses the UNOFFICIAL WhatsApp Web API (Baileys).**
+WhatsApp may ban accounts using unofficial clients.
+**USE A DEDICATED BURNER NUMBER** — never use your personal number.
+The authors take no responsibility for account bans or any other consequences of using this software.
 
-- List and search chats, contacts, and messages
-- Send text messages and files (images, videos, documents, audio)
-- Download media from received messages
-- Transcribe voice notes via Whisper-compatible API (Groq, OpenAI)
-- Reply to spam with UAE DNCR violation warning
-- Full-text message search across all chats or within a specific chat
-- Automatic history sync on first pairing (QR scan)
-- Multi-instance safe: only one process connects to WhatsApp; extras run read-only from SQLite
-- Contact name import from phone address book via VCF file
+## What This Is
 
-## Prerequisites
-
-- Node.js 18+
-- A WhatsApp account with an active phone number
+This is a fork of `karlfoster/whatsapp-mcp-2.0` with significant security hardening and operational improvements. It allows an AI assistant (like Claude) to:
+- List and search chats, contacts, and messages.
+- Send text messages and files (images, videos, documents, audio).
+- Download media from received messages.
+- Transcribe voice notes via Whisper-compatible APIs.
+- Sync phone contacts from VCF files.
 
 ## Setup
 
+1.  **Clone the repository**:
+    ```bash
+    git clone <repo-url>
+    cd whatsapp-mcp
+    ```
+
+2.  **Install dependencies**:
+    ```bash
+    npm ci
+    ```
+
+3.  **Configure environment variables**:
+    Create a `.env` file or set them in your MCP client configuration (see below).
+
+4.  **Run the server**:
+    ```bash
+    npm run dev
+    ```
+
+5.  **Scan the QR code**:
+    On first run, a QR code will appear in your terminal. Scan it with WhatsApp on your phone:
+    **WhatsApp > Settings > Linked Devices > Link a Device**
+
+## Environment Variables
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `ALLOWED_SEND_DIR` | `./uploads/` | Directory for outbound file sends. |
+| `MAX_SEND_FILE_SIZE` | `67108864` (64MB) | Max file size for `send_file`. |
+| `DOWNLOADS_DIR` | `./downloads/` | Directory for downloaded media. |
+| `CONTACTS_DIR` | `./contacts/` | Base directory for VCF imports. |
+| `WHISPER_API_URL` | (none) | Whisper API endpoint for transcription. |
+| `WHISPER_API_KEY` | (none) | API key for Whisper. |
+| `WHISPER_MODEL` | `whisper-large-v3-turbo` | Model name for transcription. |
+| `ZOMBIE_TIMEOUT_MS` | `120000` (2min) | Silence before zombie connection detection. |
+| `MAX_SEND_FAILURES` | `3` | Consecutive failures before reconnect. |
+| `MIN_SEND_INTERVAL_MS` | `3000` (3s) | Minimum delay between sends. |
+| `SEND_JITTER_MS` | `2000` (2s) | Random jitter added to send delay. |
+| `MAX_RECONNECT_ATTEMPTS` | `10` | Max reconnect attempts before giving up. |
+
+## Storage Locations
+
+- `auth_info/`: WhatsApp authentication credentials (DO NOT commit).
+- `data/`: SQLite database containing messages, chats, and contacts.
+- `store/`: Baileys message store and `.whatsapp.lock` file.
+- `uploads/`: Files to send (only files in this directory can be sent via `send_file`).
+- `downloads/`: Downloaded media files.
+- `contacts/`: VCF files for contact import.
+
+## Running Tests
+
+This project uses Vitest for testing.
+
 ```bash
-# Install dependencies
-npm install
+# Run all tests
+npx vitest run
 
-# Build
-npm run build
-
-# Start the server
-npm start
+# Run tests with coverage
+npx vitest run --coverage
 ```
 
-On first run, a QR code is printed to stderr. Scan it with WhatsApp on your phone:
+## Known Limitations
 
-**WhatsApp > Settings > Linked Devices > Link a Device**
+- **No FTS5**: SQLite full-text search is not used; substring search (`LIKE`) is used instead.
+- **No Read Receipts**: The server does not send read receipts.
+- **No Reactions**: Message reactions are not supported.
+- **No Stories**: WhatsApp Stories/Status updates are not accessible.
 
-After scanning, the server syncs your chat history and begins listening for new messages. Authentication credentials are saved to `auth_info/` so subsequent starts reconnect automatically.
+## Security Changes (What changed from upstream)
 
-## MCP Client Configuration
-
-Add the server to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "whatsapp": {
-      "command": "node",
-      "args": ["/absolute/path/to/whatsapp-mcp/dist/index.js"],
-      "env": {
-        "WHISPER_API_URL": "https://api.groq.com/openai/v1/audio/transcriptions",
-        "WHISPER_API_KEY": "gsk_your_key_here"
-      }
-    }
-  }
-}
-```
-
-The `env` block is optional and only needed for voice note transcription (see below).
-
-## Voice Note Transcription
-
-The `transcribe_voice_note` tool uses a Whisper-compatible speech-to-text API to transcribe voice notes. Audio is downloaded from WhatsApp into memory, sent to the API, and discarded — nothing is saved to disk. Transcriptions are cached in the database so repeated calls are instant.
-
-### Configuration
-
-Set these environment variables in the MCP client config `env` block:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `WHISPER_API_URL` | Yes | API endpoint URL |
-| `WHISPER_API_KEY` | Yes | API key |
-| `WHISPER_MODEL` | No | Model name (default: `whisper-large-v3`) |
-
-### Groq (recommended — free tier)
-
-```json
-"env": {
-  "WHISPER_API_URL": "https://api.groq.com/openai/v1/audio/transcriptions",
-  "WHISPER_API_KEY": "gsk_..."
-}
-```
-
-Get a free API key at [console.groq.com](https://console.groq.com).
-
-### OpenAI
-
-```json
-"env": {
-  "WHISPER_API_URL": "https://api.openai.com/v1/audio/transcriptions",
-  "WHISPER_API_KEY": "sk-...",
-  "WHISPER_MODEL": "whisper-1"
-}
-```
+- **Path Traversal Protection**: Strict containment checks for `send_file` and `download_media` using resolved paths.
+- **SSRF Validation**: `WHISPER_API_URL` is validated to prevent SSRF attacks (rejects localhost and private IP ranges).
+- **Atomic Lock File**: Prevents multiple instances from connecting to the same WhatsApp account simultaneously.
+- **Strict Filename Sanitization**: All filenames are sanitized to prevent injection and traversal.
+- **Bounded Memory Caches**: Prevents unbounded memory growth in Baileys message retry and device tracking.
+- **Pre-key Pruning**: Automatically prunes old pre-keys to prevent disk bloat.
+- **Removed `reply_spam`**: Removed the UAE-specific spam reply tool for better general-purpose use.
+- **Streamed Uploads**: `send_file` uses streams instead of loading full files into memory.
 
 ## Available Tools
 
-| Tool | Description |
-|------|-------------|
-| `list_chats` | List chats sorted by last activity, optionally filtered by name |
-| `get_chat` | Get chat details with recent messages |
-| `list_messages` | Get messages from a chat (newest first) |
-| `search_messages` | Full-text search across all chats or a specific chat |
-| `search_contacts` | Find contacts by name or phone number |
-| `get_message_context` | Get messages surrounding a specific message |
-| `get_my_profile` | Get the authenticated user's JID, name, and phone number |
-| `update_contact` | Update or set a contact's display name (updates chat listing too) |
-| `sync_contacts` | Import phone contacts from a VCF file into the database |
-| `send_message` | Send a text message (requires confirmation before sending) |
-| `send_file` | Send an image, video, audio, or document file |
-| `reply_spam` | Send a UAE DNCR violation response to any unsolicited marketing — estate agents, insurance, car sales, etc. (requires confirmation) |
-| `delete_message` | Delete a message for everyone (requires confirmation before deleting) |
-| `delete_chat` | Delete an entire chat from WhatsApp and local database (requires confirmation) |
-| `download_media` | Download media from a received message to disk |
-| `transcribe_voice_note` | Transcribe a voice note to text via speech-to-text API (results cached) |
-
-## Confirmation Flow
-
-The `send_message`, `reply_spam`, `delete_message`, and `delete_chat` tools use a two-step confirmation flow to prevent accidental actions. When called, they first return a preview showing:
-
-- **Recipient name** (from your contacts database)
-- **Phone number**
-- **Message content** (for sends) or **message ID** (for deletes)
-
-The action is only performed after you confirm. The AI assistant must call the tool a second time with `confirmed: true` to proceed.
-
-## Importing Phone Contacts
-
-WhatsApp does not sync your phone's address book names to linked/companion devices. To see contact names instead of phone numbers, import them from a VCF (vCard) file:
-
-### Export contacts from your phone
-
-**iPhone:** iCloud.com > Contacts > Select All > Export vCard
-
-**Android:** Contacts app > Settings > Export > Export to .vcf file
-
-### Import into the database
-
-```bash
-# Place the VCF file in the contacts/ directory (git-ignored)
-mkdir -p contacts
-cp ~/Downloads/contacts.vcf contacts/
-
-# Preview matches without making changes
-npm run import-contacts -- contacts/contacts.vcf --dry-run
-
-# Run the import
-npm run import-contacts -- contacts/contacts.vcf
-```
-
-The importer matches phone numbers from your address book to existing WhatsApp JIDs in the database using:
-
-1. **Exact matching** — normalized phone number matches a known JID directly
-2. **Fuzzy matching** — last 9 digits match, catching local vs. international format differences (e.g. `05xxxxxxxx` vs `9715xxxxxxxx`)
-
-Fuzzy matches are listed separately so you can verify them. Run with `--dry-run` first.
-
-## Project Structure
-
-```
-src/
-  index.ts          Entry point, lock file, MCP server setup
-  whatsapp.ts       Baileys client, event handling, high-level API
-  db.ts             SQLite database layer (better-sqlite3)
-  tools.ts          MCP tool definitions
-  transcribe.ts     Whisper API client for voice note transcription
-  utils.ts          Shared helpers (JID conversion, MIME types)
-  import-contacts.ts  VCF contact import script
-
-auth_info/          WhatsApp authentication credentials (git-ignored)
-store/              SQLite database (git-ignored)
-downloads/          Downloaded media files (git-ignored)
-contacts/           Imported contact files (git-ignored)
-patches/            Baileys patches applied via patch-package
-```
-
-### Event Handling
-
-Baileys buffers events during history sync and flushes them as a consolidated map. The server uses `sock.ev.process()` (not individual `.on()` listeners) to receive both buffered and real-time events correctly.
-
-### Multi-Instance Safety
-
-A file lock (`store/.whatsapp.lock`) ensures only one process connects to WhatsApp at a time. Additional instances (e.g. from Claude Desktop spawning multiple MCP servers) run in read-only mode, serving data from SQLite without opening a second WebSocket connection.
-
-### History Sync
-
-On first pairing (QR scan), WhatsApp delivers your chat history in multiple sync events. The server persists all chats, contacts, and messages to SQLite. History sync only happens on first pairing — reconnections reuse the existing database.
-
-## Troubleshooting
-
-**QR code not appearing:** Make sure you're running the server directly (not through an MCP client) so you can see stderr output. Use `npm run dev` for development.
-
-**Status 515 disconnect after initial sync:** This is normal. WhatsApp sends a `restartRequired` signal after the initial data dump. The server automatically reconnects with exponential backoff.
-
-**"Couldn't finish syncing" on phone:** A cosmetic message that appears briefly during first pairing. It clears on its own after the connection stabilizes.
-
-**Status 401 (logged out):** Your session was invalidated. Delete `auth_info/` and re-scan the QR code.
-
-**Chats showing phone numbers instead of names:** WhatsApp doesn't sync address book names to linked devices. Use the VCF contact import feature described above.
-
-## Development
-
-```bash
-# Run with hot-reload
-npm run dev
-
-# Type-check without emitting
-npx tsc --noEmit
-
-# Build for production
-npm run build
-```
-
-## Disclaimer
-
-This software is provided as-is, without warranty of any kind. The authors take no responsibility for how this code is used. Use at your own risk and in compliance with WhatsApp's Terms of Service and all applicable laws.
+- `list_chats`: List chats sorted by last activity.
+- `get_chat`: Get chat details with recent messages.
+- `list_messages`: Get messages from a chat.
+- `search_messages`: Substring search across messages.
+- `search_contacts`: Find contacts by name or phone number.
+- `get_message_context`: Get messages surrounding a specific message.
+- `get_my_profile`: Get your own JID and profile info.
+- `update_contact`: Update a contact's display name.
+- `sync_contacts`: Import phone contacts from a VCF file.
+- `send_message`: Send a text message (requires confirmation).
+- `send_file`: Send a media file (requires confirmation).
+- `delete_message`: Delete a message (requires confirmation).
+- `delete_chat`: Delete an entire chat (requires confirmation).
+- `download_media`: Download media from a message to disk.
+- `transcribe_voice_note`: Transcribe a voice note to text.
 
 ## License
 
