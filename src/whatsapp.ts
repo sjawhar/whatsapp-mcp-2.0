@@ -18,13 +18,14 @@ import {
   mimeFromExtension,
   mediaCategoryFromMime,
   validateFilePath,
+  sanitizeFilename,
 } from "./utils.js";
 import * as db from "./db.js";
 import { transcribeAudio } from "./transcribe.js";
 
 const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const AUTH_DIR = path.join(__project_root, "auth_info");
-const DOWNLOADS_DIR = path.join(__project_root, "downloads");
+const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || "./downloads/";
 
 const logger = pino(
   { level: "warn" },
@@ -53,8 +54,6 @@ async function flushPendingWrites(): Promise<void> {
   }
 }
 
-const fixFileName = (file: string) => file?.replace(/\//g, "__")?.replace(/:/g, "-");
-
 async function atomicWrite(filePath: string, data: string): Promise<void> {
   const tmpPath = filePath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
   await fs.promises.writeFile(tmpPath, data);
@@ -68,13 +67,13 @@ async function useAtomicMultiFileAuthState(folder: string): Promise<{
   await fs.promises.mkdir(folder, { recursive: true });
 
   const writeData = async (data: any, file: string): Promise<void> => {
-    const filePath = path.join(folder, fixFileName(file));
+    const filePath = path.join(folder, sanitizeFilename(file));
     await atomicWrite(filePath, JSON.stringify(data, BufferJSON.replacer));
   };
 
   const readData = async (file: string): Promise<any> => {
     try {
-      const filePath = path.join(folder, fixFileName(file));
+      const filePath = path.join(folder, sanitizeFilename(file));
       const raw = await fs.promises.readFile(filePath, { encoding: "utf-8" });
       return JSON.parse(raw, BufferJSON.reviver);
     } catch {
@@ -84,7 +83,7 @@ async function useAtomicMultiFileAuthState(folder: string): Promise<{
 
   const removeData = async (file: string): Promise<void> => {
     try {
-      await fs.promises.unlink(path.join(folder, fixFileName(file)));
+      await fs.promises.unlink(path.join(folder, sanitizeFilename(file)));
     } catch {}
   };
 
@@ -737,8 +736,11 @@ export async function downloadMessageMedia(
   const ext = extensionFromMime(mimetype);
 
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
-  const fileName = `${messageId}.${ext}`;
+  const fileName = `${sanitizeFilename(messageId)}.${ext}`;
   const outPath = path.join(DOWNLOADS_DIR, fileName);
+  if (!path.resolve(outPath).startsWith(path.resolve(DOWNLOADS_DIR) + path.sep)) {
+    throw new Error("Path traversal detected");
+  }
   fs.writeFileSync(outPath, buffer as Buffer);
 
   return {
