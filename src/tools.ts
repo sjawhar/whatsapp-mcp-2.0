@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import fs from "fs";
+import path from "path";
 import {
   getChats,
   getChat,
@@ -19,6 +21,7 @@ import {
 } from "./whatsapp.js";
 import { getDb } from "./db.js";
 import { importContactsFromVcf } from "./import-contacts.js";
+import { validateFilePath } from "./utils.js";
 
 /**
  * Register all WhatsApp MCP tools on the server.
@@ -268,15 +271,42 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "send_file",
-    "Send an image, video, audio, or document file to a WhatsApp contact or group.",
+    "Send an image, video, audio, or document file to a WhatsApp contact or group. " +
+    "First call without confirmed=true returns a preview for user approval. " +
+    "Call again with confirmed=true to actually send.",
     {
       jid: z.string().describe("Recipient JID or phone number"),
       filePath: z.string().describe("Absolute path to the file to send"),
       caption: z.string().optional().describe("Optional caption for the file"),
+      confirmed: z.boolean().default(false).describe("Set to true to confirm and send the file. When false, returns a preview for user approval."),
     },
-    async ({ jid, filePath, caption }) => {
+    async ({ jid, filePath, caption, confirmed }) => {
       try {
-        const result = await sendFileMessage(jid, filePath, caption);
+        const recipient = getRecipientInfo(jid);
+        const allowedDir = process.env.ALLOWED_SEND_DIR || "./uploads/";
+        const maxFileSize = Number(process.env.MAX_SEND_FILE_SIZE || "67108864");
+        const validation = validateFilePath(filePath, allowedDir, maxFileSize);
+
+        if (!validation.valid) {
+          throw new Error(validation.error);
+        }
+
+        if (!confirmed) {
+          const stat = fs.statSync(validation.absolutePath);
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                preview: true,
+                fileName: path.basename(validation.absolutePath),
+                fileSize: stat.size,
+                recipient,
+              }, null, 2),
+            }],
+          };
+        }
+
+        const result = await sendFileMessage(jid, validation.absolutePath, caption);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
         };

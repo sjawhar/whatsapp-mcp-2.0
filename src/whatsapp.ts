@@ -17,6 +17,7 @@ import {
   fromJid,
   mimeFromExtension,
   mediaCategoryFromMime,
+  validateFilePath,
 } from "./utils.js";
 import * as db from "./db.js";
 import { transcribeAudio } from "./transcribe.js";
@@ -660,33 +661,37 @@ export async function sendFileMessage(
   filePath: string,
   caption?: string
 ): Promise<Record<string, unknown>> {
+  const allowedDir = process.env.ALLOWED_SEND_DIR || "./uploads/";
+  const maxFileSize = Number(process.env.MAX_SEND_FILE_SIZE || "67108864");
+  const validation = validateFilePath(filePath, allowedDir, maxFileSize);
+  if (!validation.valid) {
+    throw new Error(validation.error);
+  }
+
+  const absolutePath = validation.absolutePath;
+
   await connectionReady;
   const s = await getSocket();
   const normalJid = toJid(jid);
 
-  const absolutePath = path.resolve(filePath);
-  if (!fs.existsSync(absolutePath)) {
-    throw new Error(`File not found: ${absolutePath}`);
-  }
-
   const mime = mimeFromExtension(absolutePath);
   const category = mediaCategoryFromMime(mime);
-  const buffer = fs.readFileSync(absolutePath);
+  const stream = fs.createReadStream(absolutePath);
   const fileName = path.basename(absolutePath);
 
   let messageContent: Parameters<typeof s.sendMessage>[1];
   switch (category) {
     case "image":
-      messageContent = { image: buffer, caption, mimetype: mime };
+      messageContent = { image: stream as any, caption, mimetype: mime };
       break;
     case "video":
-      messageContent = { video: buffer, caption, mimetype: mime };
+      messageContent = { video: stream as any, caption, mimetype: mime };
       break;
     case "audio":
-      messageContent = { audio: buffer, mimetype: mime, ptt: false };
+      messageContent = { audio: stream as any, mimetype: mime, ptt: false };
       break;
     default:
-      messageContent = { document: buffer, mimetype: mime, fileName, caption };
+      messageContent = { document: stream as any, mimetype: mime, fileName, caption };
       break;
   }
 

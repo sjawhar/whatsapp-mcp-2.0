@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+
 /**
  * Normalize a phone number or JID into proper WhatsApp JID format.
  * Accepts: "1234567890", "+1234567890", "1234567890@s.whatsapp.net"
@@ -96,4 +99,42 @@ export function mediaCategoryFromMime(mime: string): "image" | "video" | "audio"
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("audio/")) return "audio";
   return "document";
+}
+
+export function validateFilePath(
+  filePath: string,
+  allowedDir: string,
+  maxSizeBytes: number
+): { valid: true; absolutePath: string } | { valid: false; error: string } {
+  const absolutePath = path.resolve(filePath);
+  const allowedDirPath = path.resolve(allowedDir);
+  const allowedPrefix = `${allowedDirPath}${path.sep}`;
+
+  if (!absolutePath.startsWith(allowedPrefix)) {
+    return { valid: false, error: "Path not allowed" };
+  }
+
+  if (!fs.existsSync(absolutePath)) {
+    return { valid: false, error: `File not found: ${absolutePath}` };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(absolutePath);
+  } catch (err: any) {
+    return { valid: false, error: err?.message || "Failed to stat file" };
+  }
+
+  if (!stat.isFile()) {
+    return { valid: false, error: `Not a file: ${absolutePath}` };
+  }
+
+  if (stat.size > maxSizeBytes) {
+    return {
+      valid: false,
+      error: `File too large: ${stat.size} bytes exceeds ${maxSizeBytes} bytes`,
+    };
+  }
+
+  return { valid: true, absolutePath };
 }
