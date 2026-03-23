@@ -99,6 +99,10 @@ export function registerTools(server: McpServer): void {
     },
     async ({ query, jid }) => {
       try {
+        if (!query.trim()) {
+          throw new Error("Search query cannot be empty");
+        }
+
         const results = await searchMessages(query, jid);
         return {
           content: [
