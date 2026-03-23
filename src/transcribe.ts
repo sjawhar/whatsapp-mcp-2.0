@@ -1,3 +1,5 @@
+import { validateApiUrl } from "./utils.js";
+
 interface TranscriptionResult {
   text: string;
   language?: string;
@@ -19,8 +21,10 @@ function getConfig() {
     );
   }
 
+  const validatedUrl = validateApiUrl(apiUrl);
+
   return {
-    apiUrl,
+    apiUrl: validatedUrl.href,
     apiKey,
     model: process.env.WHISPER_MODEL || "whisper-large-v3-turbo",
   };

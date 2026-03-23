@@ -142,3 +142,45 @@ export function validateFilePath(
 export function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
+
+function isPrivateIp(hostname: string): boolean {
+  const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  const match = hostname.match(ipv4Regex);
+  if (!match) return false;
+  const [, a, b] = match.map(Number);
+  return (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) // link-local / cloud metadata
+  );
+}
+
+/**
+ * Validate a Whisper API URL to prevent SSRF attacks.
+ * Rejects non-http(s) protocols, localhost, and private IP ranges.
+ * Returns the parsed URL on success; throws on violation.
+ */
+export function validateApiUrl(url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Only http/https URLs allowed for WHISPER_API_URL (got ${parsed.protocol})`);
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+  if (['localhost', '127.0.0.1', '::1'].includes(hostname)) {
+    throw new Error(`SSRF protection: localhost not allowed for WHISPER_API_URL`);
+  }
+
+  if (isPrivateIp(hostname)) {
+    throw new Error(`SSRF protection: Private/internal IP not allowed for WHISPER_API_URL (${hostname})`);
+  }
+
+  return parsed;
+}
