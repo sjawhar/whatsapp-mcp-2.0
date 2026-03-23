@@ -26,6 +26,10 @@ import { transcribeAudio } from "./transcribe.js";
 const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const AUTH_DIR = path.join(__project_root, "auth_info");
 const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || "./downloads/";
+const parsedMaxReconnectAttempts = Number(process.env.MAX_RECONNECT_ATTEMPTS || "10");
+const MAX_RECONNECT_ATTEMPTS = Number.isFinite(parsedMaxReconnectAttempts) && parsedMaxReconnectAttempts > 0
+  ? Math.floor(parsedMaxReconnectAttempts)
+  : 10;
 
 const logger = pino(
   { level: "warn" },
@@ -157,6 +161,107 @@ function resetConnectionPromise() {
   });
 }
 
+function scheduleReconnect(delayMs: number): void {
+  reconnectAttempts++;
+  if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+    console.error(
+      `Fatal: reached MAX_RECONNECT_ATTEMPTS (${MAX_RECONNECT_ATTEMPTS}). ` +
+      "Stopping reconnect attempts."
+    );
+    return;
+  }
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  console.error(`Reconnecting in ${delayMs / 1000}s (attempt ${reconnectAttempts})...`);
+  resetConnectionPromise();
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void initWhatsApp();
+  }, delayMs);
+}
+
+export async function clearAuthState(): Promise<void> {
+  try {
+    const entries = await fs.promises.readdir(AUTH_DIR);
+    await Promise.all(
+      entries.map((entry) =>
+        fs.promises.rm(path.join(AUTH_DIR, entry), { recursive: true, force: true })
+      )
+    );
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return;
+    console.error("Failed to clear auth state:", err);
+  }
+}
+
+export function getReconnectAttempts(): number {
+  return reconnectAttempts;
+}
+
+export async function handleDisconnect(statusCode: number | undefined, currentSock: WASocket | null): Promise<void> {
+  const socketState = currentSock ? "socket-present" : "socket-missing";
+  console.error(`Connection closed. Status: ${statusCode}. Context: ${socketState}`);
+
+  switch (statusCode) {
+    case DisconnectReason.loggedOut: {
+      await clearAuthState();
+      console.error("WhatsApp logged out. re-scan QR required.");
+      rejectConnection(new Error("Logged out from WhatsApp. re-scan QR required."));
+      return;
+    }
+    case DisconnectReason.forbidden: {
+      console.error("Disconnect forbidden (403). Reconnect disabled.");
+      rejectConnection(new Error("WhatsApp connection forbidden (403)."));
+      return;
+    }
+    case DisconnectReason.multideviceMismatch: {
+      console.error("Multi-device mismatch (411). Please update Baileys.");
+      rejectConnection(new Error("Multi-device mismatch (411). update Baileys."));
+      return;
+    }
+    case DisconnectReason.connectionLost:
+    case DisconnectReason.connectionClosed:
+    case DisconnectReason.unavailableService: {
+      const delay = Math.min(1000 * 2 ** (reconnectAttempts + 1), 30000);
+      scheduleReconnect(delay);
+      return;
+    }
+    case DisconnectReason.connectionReplaced: {
+      console.error(
+        "Connection replaced by another session. " +
+        "If this keeps happening, delete auth_info/ and re-scan the QR code."
+      );
+      const rejectCurrentConnection = rejectConnection;
+      resetConnectionPromise();
+      rejectCurrentConnection(new Error("Connection replaced by another session."));
+      const delay = Math.min(10000 * 2 ** reconnectAttempts, 30000);
+      scheduleReconnect(delay);
+      return;
+    }
+    case DisconnectReason.badSession: {
+      await clearAuthState();
+      console.error("Bad session (500). Clearing auth state and reconnecting.");
+      const delay = Math.min(1000 * 2 ** (reconnectAttempts + 1), 30000);
+      scheduleReconnect(delay);
+      return;
+    }
+    case DisconnectReason.restartRequired: {
+      scheduleReconnect(0);
+      return;
+    }
+    default: {
+      console.error(`Unknown disconnect code: ${statusCode}. Reconnecting with backoff.`);
+      const delay = Math.min(1000 * 2 ** (reconnectAttempts + 1), 30000);
+      scheduleReconnect(delay);
+      return;
+    }
+  }
+}
+
 resetConnectionPromise();
 
 /**
@@ -239,32 +344,7 @@ export async function initWhatsApp(): Promise<void> {
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        const shouldReconnect =
-          statusCode !== DisconnectReason.loggedOut &&
-          statusCode !== DisconnectReason.connectionReplaced;
-
-        console.error(`Connection closed. Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
-
-        if (statusCode === DisconnectReason.connectionReplaced) {
-          console.error(
-            "Connection replaced by another session. " +
-            "If this keeps happening, delete auth_info/ and re-scan the QR code."
-          );
-          const rejectCurrentConnection = rejectConnection;
-          resetConnectionPromise();
-          rejectCurrentConnection(new Error("Connection replaced by another session."));
-        } else if (shouldReconnect) {
-          reconnectAttempts++;
-          const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000);
-          console.error(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
-          resetConnectionPromise();
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            void initWhatsApp();
-          }, delay);
-        } else {
-          rejectConnection(new Error("Logged out from WhatsApp. Delete auth_info/ and re-scan QR."));
-        }
+        await handleDisconnect(statusCode, sock);
       }
 
       if (connection === "open") {
