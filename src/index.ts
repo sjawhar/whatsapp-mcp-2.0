@@ -1,43 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import fs from "fs";
 import path from "path";
 import { initDb, closeDb } from "./db.js";
 import { initWhatsApp, closeWhatsApp, resolveConnectionAsReadOnly } from "./whatsapp.js";
 import { registerTools } from "./tools.js";
+import { acquireWhatsAppLock, releaseWhatsAppLock } from "./lock.js";
 
 const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const LOCK_FILE = path.join(__project_root, "store", ".whatsapp.lock");
-
-/**
- * Try to acquire a file lock for the WhatsApp connection.
- * Only one process should connect to WhatsApp at a time to avoid status 515/440.
- * Returns true if we got the lock.
- */
-function acquireWhatsAppLock(): boolean {
-  fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
-  if (fs.existsSync(LOCK_FILE)) {
-    const pid = parseInt(fs.readFileSync(LOCK_FILE, "utf-8").trim(), 10);
-    try {
-      process.kill(pid, 0); // throws if process is dead
-      return false; // another instance is alive
-    } catch {
-      console.error(`Stale lock file found (PID ${pid} is dead) — clearing and taking over`);
-    }
-  }
-  fs.writeFileSync(LOCK_FILE, String(process.pid));
-  return true;
-}
-
-function releaseWhatsAppLock(): void {
-  try {
-    // Only release if we own the lock
-    if (fs.existsSync(LOCK_FILE)) {
-      const pid = parseInt(fs.readFileSync(LOCK_FILE, "utf-8").trim(), 10);
-      if (pid === process.pid) fs.unlinkSync(LOCK_FILE);
-    }
-  } catch {}
-}
 
 async function main() {
   console.error("Starting WhatsApp MCP Server...");
@@ -61,7 +31,7 @@ async function main() {
   // 3. Initialize WhatsApp in the background — but only if no other instance
   //    already owns the WhatsApp connection. This prevents status 515/440
   //    when Claude Desktop spawns multiple MCP server instances.
-  if (acquireWhatsAppLock()) {
+  if (acquireWhatsAppLock(LOCK_FILE)) {
     console.error("WhatsApp lock acquired — connecting...");
     initWhatsApp().catch((err) => {
       console.error("Failed to initialize WhatsApp:", err);
@@ -75,7 +45,7 @@ async function main() {
   const shutdown = async () => {
     console.error("Shutting down...");
     await closeWhatsApp();
-    releaseWhatsAppLock();
+    releaseWhatsAppLock(LOCK_FILE);
     closeDb();
     await server.close();
     process.exit(0);
@@ -83,6 +53,14 @@ async function main() {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled rejection:", reason);
+    shutdown();
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("Uncaught exception:", err);
+    shutdown();
+  });
 }
 
 main().catch((err) => {
