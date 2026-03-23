@@ -127,6 +127,13 @@ export interface ImportResult {
 export function importContactsFromVcf(dbInstance: Database.Database, vcfPath?: string): ImportResult {
   const absPath = path.resolve(vcfPath || DEFAULT_VCF);
 
+  // Containment check: VCF path must be inside the allowed contacts directory
+  const allowedBase = path.resolve(process.env.CONTACTS_DIR || CONTACTS_DIR);
+  const allowedPrefix = `${allowedBase}${path.sep}`;
+  if (!absPath.startsWith(allowedPrefix)) {
+    throw new Error(`VCF path not allowed: must be within ${allowedBase}`);
+  }
+
   if (!fs.existsSync(absPath)) {
     throw new Error(`VCF file not found: ${absPath}`);
   }

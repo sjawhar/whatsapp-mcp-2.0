@@ -11,7 +11,7 @@ export function toJid(input: string): string {
 
   // Already a valid JID
   if (trimmed.endsWith("@s.whatsapp.net") || trimmed.endsWith("@g.us") || trimmed.endsWith("@lid")) {
-    return trimmed;
+    return trimmed.replace(/:\d+@/, "@");
   }
 
   // Strip non-numeric characters (like +, spaces, dashes)

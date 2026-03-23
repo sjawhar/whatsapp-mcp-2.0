@@ -506,9 +506,9 @@ function getSocketOrNull(): WASocket | null {
 
 // ─── Reading Functions ──────────────────────────────────────────────
 
-export async function getChats(nameFilter?: string): Promise<Record<string, unknown>[]> {
+export async function getChats(nameFilter?: string, limit?: number): Promise<Record<string, unknown>[]> {
   await connectionReady;
-  const chats = db.getChats(nameFilter);
+  const chats = db.getChats(nameFilter, limit);
 
   // Resolve names for any chats missing them (like the Go project does inline)
   for (const chat of chats) {

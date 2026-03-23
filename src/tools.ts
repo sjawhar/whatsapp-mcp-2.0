@@ -38,12 +38,12 @@ export function registerTools(server: McpServer): void {
     },
     async ({ nameFilter, limit }) => {
       try {
-        const chats = await getChats(nameFilter);
+        const chats = await getChats(nameFilter, limit);
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(chats.slice(0, limit), null, 2),
+              text: JSON.stringify(chats, null, 2),
             },
           ],
         };
@@ -92,7 +92,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "search_messages",
-    "Full-text search across messages. Can search in a specific chat or across all chats.",
+    "Substring search across messages. Can search in a specific chat or across all chats.",
     {
       query: z.string().describe("Text to search for (case-insensitive)"),
       jid: z.string().optional().describe("Optional: limit search to a specific chat JID"),

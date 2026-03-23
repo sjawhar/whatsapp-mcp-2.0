@@ -424,9 +424,10 @@ export function searchMessages(query: string, jid?: string): Record<string, unkn
   let sql = `
     SELECT id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media
     FROM messages
-    WHERE text LIKE ?
+    WHERE text LIKE ? ESCAPE '\\'
   `;
-  const params: any[] = [`%${query}%`];
+  const escaped = query.replace(/[%_\\]/g, "\\$&");
+  const params: any[] = [`%${escaped}%`];
 
   if (jid) {
     const jids = getAllJidsFor(jid);
