@@ -132,6 +132,7 @@ let connectionReady: Promise<void>;
 let resolveConnection: () => void;
 let rejectConnection: (err: Error) => void;
 let reconnectAttempts = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ─── User Identity ──────────────────────────────────────────────────
 
@@ -249,13 +250,18 @@ export async function initWhatsApp(): Promise<void> {
             "Connection replaced by another session. " +
             "If this keeps happening, delete auth_info/ and re-scan the QR code."
           );
-          rejectConnection(new Error("Connection replaced by another session."));
+          const rejectCurrentConnection = rejectConnection;
+          resetConnectionPromise();
+          rejectCurrentConnection(new Error("Connection replaced by another session."));
         } else if (shouldReconnect) {
           reconnectAttempts++;
           const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000);
           console.error(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
           resetConnectionPromise();
-          setTimeout(() => initWhatsApp(), delay);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            void initWhatsApp();
+          }, delay);
         } else {
           rejectConnection(new Error("Logged out from WhatsApp. Delete auth_info/ and re-scan QR."));
         }
@@ -438,6 +444,11 @@ export async function initWhatsApp(): Promise<void> {
  * Cleanly close the WhatsApp connection.
  */
 export async function closeWhatsApp(): Promise<void> {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
   if (sock) {
     await flushPendingWrites();
     (sock.ev as any).removeAllListeners();
