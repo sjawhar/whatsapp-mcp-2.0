@@ -17,6 +17,7 @@
 
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 
 const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -289,7 +290,7 @@ function main() {
 }
 
 // Only run CLI when executed directly (not imported)
-const isDirectRun = process.argv[1] && path.resolve(process.argv[1]).includes("import-contacts");
+const isDirectRun = import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   main();
 }

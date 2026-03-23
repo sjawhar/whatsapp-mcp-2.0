@@ -76,9 +76,11 @@ function deduplicateText(text: string): string {
   if (!sentences) return text;
 
   const trimmed = sentences.map((s) => s.trim());
+  const seen = new Set<string>();
   const deduped: string[] = [];
   for (const sentence of trimmed) {
-    if (deduped.length === 0 || sentence !== deduped[deduped.length - 1]) {
+    if (!seen.has(sentence)) {
+      seen.add(sentence);
       deduped.push(sentence);
     }
   }
