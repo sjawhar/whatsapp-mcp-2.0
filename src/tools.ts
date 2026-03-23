@@ -10,8 +10,6 @@ import {
   getRecipientInfo,
   sendTextMessage,
   sendFileMessage,
-  sendDncrReply,
-  getDncrMessage,
   downloadMessageMedia,
   transcribeVoiceNote,
   deleteMessage,
@@ -288,47 +286,6 @@ export function registerTools(server: McpServer): void {
     }
   );
 
-  server.tool(
-    "reply_spam",
-    "Send a pre-built UAE Do Not Call Register (DNCR) violation response to an unsolicited marketing message. " +
-    "Use this to reply to spam from estate agents, insurance companies, car dealerships, or any other unsolicited marketing. " +
-    "The message warns the sender they are violating Cabinet Resolution No. 56/2024, cites penalties under Resolution 57/2024, " +
-    "and states you will report them to the TDRA and Ministry of Economy. " +
-    "First call without confirmed=true returns a preview for user approval. " +
-    "Call again with confirmed=true to actually send.",
-    {
-      jid: z.string().describe("Recipient JID (phone@s.whatsapp.net) or phone number of the spammer"),
-      confirmed: z.boolean().default(false).describe("Set to true to confirm and send. When false, returns a preview for user approval."),
-    },
-    async ({ jid, confirmed }) => {
-      try {
-        const recipient = getRecipientInfo(jid);
-
-        if (!confirmed) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "confirmation_required",
-                to: recipient.name || "Unknown contact",
-                phone: recipient.phone,
-                jid: recipient.jid,
-                message: getDncrMessage(),
-                instruction: "Show the user who this DNCR response will be sent to, their number, and the message. Ask them to confirm before calling reply_spam again with confirmed=true.",
-              }, null, 2),
-            }],
-          };
-        }
-
-        const result = await sendDncrReply(jid);
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true };
-      }
-    }
-  );
 
   server.tool(
     "delete_message",

@@ -55,7 +55,7 @@ async function flushPendingWrites(): Promise<void> {
 const fixFileName = (file: string) => file?.replace(/\//g, "__")?.replace(/:/g, "-");
 
 async function atomicWrite(filePath: string, data: string): Promise<void> {
-  const tmpPath = filePath + ".tmp." + process.pid;
+  const tmpPath = filePath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
   await fs.promises.writeFile(tmpPath, data);
   await fs.promises.rename(tmpPath, filePath);
 }
@@ -641,21 +641,6 @@ export function getRecipientInfo(jid: string): { jid: string; name: string | nul
   return { jid: normalJid, name, phone };
 }
 
-const DNCR_MESSAGE = `This is unsolicited marketing. My number is on the UAE Do Not Call Register (DNCR).
-
-You are in violation of Cabinet Resolution No. 56/2024. Penalties under Resolution 57/2024 range from AED 10,000 to AED 150,000, including suspension and licence cancellation.
-
-I will be reporting this to the TDRA and filing a complaint with the Ministry of Economy to investigate how your organisation obtained my personal number without consent, which is a separate violation of UAE data protection law.
-
-Do not contact me again.`;
-
-export function getDncrMessage(): string {
-  return DNCR_MESSAGE;
-}
-
-export async function sendDncrReply(jid: string): Promise<Record<string, unknown>> {
-  return sendTextMessage(jid, DNCR_MESSAGE);
-}
 
 export async function sendTextMessage(jid: string, text: string): Promise<Record<string, unknown>> {
   await connectionReady;
