@@ -58,3 +58,11 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Runtime directories (not tracked)
+uploads/*
+!uploads/.gitkeep
+downloads/*
+!downloads/.gitkeep
+data/
+*.lock
