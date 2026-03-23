@@ -128,6 +128,8 @@ describe("send_file security", () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "send-file-test-"));
     process.env.ALLOWED_SEND_DIR = tempDir;
     process.env.MAX_SEND_FILE_SIZE = "67108864";
+    process.env.MIN_SEND_INTERVAL_MS = "0";
+    process.env.SEND_JITTER_MS = "0";
 
     const whatsapp = await import("../whatsapp.js");
     closeWhatsApp = whatsapp.closeWhatsApp;

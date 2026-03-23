@@ -56,6 +56,8 @@ describe("zombie watchdog + send health check", () => {
     mockState.sockets.length = 0;
     process.env.ZOMBIE_TIMEOUT_MS = "120000";
     process.env.MAX_SEND_FAILURES = "3";
+    process.env.MIN_SEND_INTERVAL_MS = "0";
+    process.env.SEND_JITTER_MS = "0";
 
     await setupTestDb();
     seedTestDb();

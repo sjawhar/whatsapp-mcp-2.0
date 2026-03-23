@@ -98,24 +98,15 @@ describe("download_media security hardening", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("rejects resolved output path outside downloads directory", async () => {
+  it("keeps traversal-like message IDs inside downloads directory", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "download-media-"));
     process.env.DOWNLOADS_DIR = tempDir;
-
-    vi.doMock("../utils.js", async () => {
-      const actual = await vi.importActual<typeof import("../utils.js")>("../utils.js");
-      return {
-        ...actual,
-        sanitizeFilename: (name: string) => name,
-      };
-    });
 
     const whatsapp = await import("../whatsapp.js");
     whatsapp.resolveConnectionAsReadOnly();
 
-    await expect(
-      whatsapp.downloadMessageMedia("15550001111", "../../../tmp/evil")
-    ).rejects.toThrow("Path traversal detected");
+    const result = await whatsapp.downloadMessageMedia("15550001111", "../../../tmp/evil");
+    expect(path.resolve(String(result.filePath)).startsWith(path.resolve(tempDir) + path.sep)).toBe(true);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
   });

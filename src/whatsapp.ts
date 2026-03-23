@@ -40,6 +40,39 @@ const MAX_SEND_FAILURES = Number.isFinite(parsedMaxSendFailures) && parsedMaxSen
   ? Math.floor(parsedMaxSendFailures)
   : 3;
 
+const parsedMinSendInterval = Number(process.env.MIN_SEND_INTERVAL_MS || "3000");
+const MIN_SEND_INTERVAL_MS = Number.isFinite(parsedMinSendInterval) && parsedMinSendInterval >= 0
+  ? Math.floor(parsedMinSendInterval)
+  : 3000;
+const parsedSendJitter = Number(process.env.SEND_JITTER_MS || "2000");
+const SEND_JITTER_MS = Number.isFinite(parsedSendJitter) && parsedSendJitter >= 0
+  ? Math.floor(parsedSendJitter)
+  : 2000;
+
+export class SendRateLimiter {
+  private lastSendTimestamp = 0;
+  private readonly minInterval: number;
+  private readonly jitterMs: number;
+
+  constructor(minInterval: number, jitterMs: number) {
+    this.minInterval = minInterval;
+    this.jitterMs = jitterMs;
+  }
+
+  async throttle(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - this.lastSendTimestamp;
+    const jitter = Math.random() * this.jitterMs;
+    const delay = Math.max(0, this.minInterval - elapsed) + jitter;
+    if (delay > 0) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    this.lastSendTimestamp = Date.now();
+  }
+}
+
+const sendRateLimiter = new SendRateLimiter(MIN_SEND_INTERVAL_MS, SEND_JITTER_MS);
+
 const PRE_KEY_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const PRE_KEY_MAX_FILES = 500;
 const PRE_KEY_KEEP_FILES = 100;
@@ -224,6 +257,7 @@ async function sendMessageWithHealthCheck(
   jid: string,
   messageContent: Parameters<WASocket["sendMessage"]>[1]
 ): Promise<Awaited<ReturnType<WASocket["sendMessage"]>>> {
+  await sendRateLimiter.throttle();
   try {
     const result = await currentSock.sendMessage(jid, messageContent as any);
     consecutiveSendFailures = 0;
