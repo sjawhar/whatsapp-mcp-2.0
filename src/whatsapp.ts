@@ -30,6 +30,14 @@ const parsedMaxReconnectAttempts = Number(process.env.MAX_RECONNECT_ATTEMPTS || 
 const MAX_RECONNECT_ATTEMPTS = Number.isFinite(parsedMaxReconnectAttempts) && parsedMaxReconnectAttempts > 0
   ? Math.floor(parsedMaxReconnectAttempts)
   : 10;
+const parsedZombieTimeoutMs = Number(process.env.ZOMBIE_TIMEOUT_MS || "120000");
+const ZOMBIE_TIMEOUT_MS = Number.isFinite(parsedZombieTimeoutMs) && parsedZombieTimeoutMs > 0
+  ? Math.floor(parsedZombieTimeoutMs)
+  : 120000;
+const parsedMaxSendFailures = Number(process.env.MAX_SEND_FAILURES || "3");
+const MAX_SEND_FAILURES = Number.isFinite(parsedMaxSendFailures) && parsedMaxSendFailures > 0
+  ? Math.floor(parsedMaxSendFailures)
+  : 3;
 
 const logger = pino(
   { level: "warn" },
@@ -137,6 +145,9 @@ let resolveConnection: () => void;
 let rejectConnection: (err: Error) => void;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let zombieWatchdog: ReturnType<typeof setInterval> | null = null;
+let lastConnectionActivity = Date.now();
+let consecutiveSendFailures = 0;
 
 // ─── User Identity ──────────────────────────────────────────────────
 
@@ -182,6 +193,42 @@ function scheduleReconnect(delayMs: number): void {
     reconnectTimer = null;
     void initWhatsApp();
   }, delayMs);
+}
+
+function clearZombieWatchdog(): void {
+  if (!zombieWatchdog) return;
+  clearInterval(zombieWatchdog);
+  zombieWatchdog = null;
+}
+
+function startZombieWatchdog(currentSock: WASocket): void {
+  clearZombieWatchdog();
+  const checkIntervalMs = Math.max(1000, Math.min(10000, ZOMBIE_TIMEOUT_MS));
+  zombieWatchdog = setInterval(() => {
+    if (!sock || sock !== currentSock) return;
+    if (Date.now() - lastConnectionActivity < ZOMBIE_TIMEOUT_MS) return;
+
+    clearZombieWatchdog();
+    currentSock.end(new Error("Zombie connection detected"));
+  }, checkIntervalMs);
+}
+
+async function sendMessageWithHealthCheck(
+  currentSock: WASocket,
+  jid: string,
+  messageContent: Parameters<WASocket["sendMessage"]>[1]
+): Promise<Awaited<ReturnType<WASocket["sendMessage"]>>> {
+  try {
+    const result = await currentSock.sendMessage(jid, messageContent as any);
+    consecutiveSendFailures = 0;
+    return result;
+  } catch (err) {
+    consecutiveSendFailures++;
+    if (consecutiveSendFailures >= MAX_SEND_FAILURES) {
+      currentSock.end(new Error("Send health check failed"));
+    }
+    throw err;
+  }
 }
 
 export async function clearAuthState(): Promise<void> {
@@ -277,6 +324,8 @@ export function resolveConnectionAsReadOnly(): void {
  * QR codes are printed to stderr so they don't interfere with MCP stdio.
  */
 export async function initWhatsApp(): Promise<void> {
+  clearZombieWatchdog();
+
   if (sock) {
     await flushPendingWrites();
     (sock.ev as any).removeAllListeners();
@@ -321,6 +370,10 @@ export async function initWhatsApp(): Promise<void> {
     shouldSyncHistoryMessage: () => isFirstPairing,
   });
 
+  lastConnectionActivity = Date.now();
+  consecutiveSendFailures = 0;
+  startZombieWatchdog(sock);
+
   // ─── Bind events ──────────────────────────────────────────
   //
   // CRITICAL: We must use sock.ev.process() instead of individual sock.ev.on()
@@ -334,6 +387,7 @@ export async function initWhatsApp(): Promise<void> {
   sock.ev.process(async (events) => {
     // ─── Connection Updates ─────────────────────────────────
     if (events["connection.update"]) {
+      lastConnectionActivity = Date.now();
       const { connection, lastDisconnect, qr } = events["connection.update"];
 
       if (qr) {
@@ -343,6 +397,7 @@ export async function initWhatsApp(): Promise<void> {
       }
 
       if (connection === "close") {
+        clearZombieWatchdog();
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         await handleDisconnect(statusCode, sock);
       }
@@ -350,6 +405,8 @@ export async function initWhatsApp(): Promise<void> {
       if (connection === "open") {
         console.error("WhatsApp connected successfully!");
         reconnectAttempts = 0;
+        lastConnectionActivity = Date.now();
+        consecutiveSendFailures = 0;
 
         if (sock?.user) {
           myJid = sock.user.id;
@@ -524,6 +581,8 @@ export async function initWhatsApp(): Promise<void> {
  * Cleanly close the WhatsApp connection.
  */
 export async function closeWhatsApp(): Promise<void> {
+  clearZombieWatchdog();
+
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -711,7 +770,7 @@ export async function deleteMessage(jid: string, messageId: string): Promise<Rec
   }
 
   // Delete on WhatsApp servers first — if this fails, local DB stays intact
-  await s.sendMessage(normalJid, {
+  await sendMessageWithHealthCheck(s, normalJid, {
     delete: {
       remoteJid: normalJid,
       fromMe,
@@ -738,7 +797,7 @@ export async function sendTextMessage(jid: string, text: string): Promise<Record
   const s = await getSocket();
   const normalJid = toJid(jid);
 
-  const sent = await s.sendMessage(normalJid, { text });
+  const sent = await sendMessageWithHealthCheck(s, normalJid, { text });
   return {
     success: true,
     messageId: sent?.key.id,
@@ -785,7 +844,7 @@ export async function sendFileMessage(
       break;
   }
 
-  const sent = await s.sendMessage(normalJid, messageContent);
+  const sent = await sendMessageWithHealthCheck(s, normalJid, messageContent);
   return {
     success: true,
     messageId: sent?.key.id,
