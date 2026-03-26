@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import fs from "fs";
 import { initDb, closeDb } from "./db.js";
 import { initWhatsApp, closeWhatsApp, resolveConnectionAsReadOnly } from "./whatsapp.js";
 import { registerTools } from "./tools.js";
 import { acquireWhatsAppLock, releaseWhatsAppLock } from "./lock.js";
 import { LOCK_FILE, DATA_DIR } from "./paths.js";
-
 console.error(`Data directory: ${DATA_DIR}`);
 
 async function main() {
@@ -28,12 +28,34 @@ async function main() {
   await server.connect(transport);
   console.error("MCP server running on stdio");
 
-  // Detect parent death: when stdin closes (parent killed us or disconnected),
-  // shut down cleanly so we don't become an orphan holding the lock.
+  // Detect parent death via two mechanisms:
+  // 1. stdin EOF — works when process is spawned directly (not via npm wrapper chain)
   process.stdin.on('end', () => {
     console.error('stdin closed (parent disconnected) — shutting down');
     shutdown();
   });
+  // 2. Parent PID polling — catches cases where npm/sh wrapper absorbs the signal
+  //    but the actual parent (OpenCode) is gone. On Linux, orphaned processes get
+  //    reparented to PID 1 (init/systemd).
+  //    Note: process.ppid is cached at startup and doesn't update, so we read
+  //    the live value from /proc/self/stat.
+  const originalPpid = process.ppid;
+  const getLivePpid = (): number => {
+    try {
+      const stat = fs.readFileSync('/proc/self/stat', 'utf8');
+      return parseInt(stat.split(' ')[3], 10);
+    } catch {
+      return process.ppid; // Fallback for non-Linux
+    }
+  };
+  const parentWatchdog = setInterval(() => {
+    const currentPpid = getLivePpid();
+    if (currentPpid !== originalPpid) {
+      console.error(`Parent changed (${originalPpid} → ${currentPpid}) — shutting down`);
+      clearInterval(parentWatchdog);
+      shutdown();
+    }
+  }, 5_000);
 
   // 3. Initialize WhatsApp in the background — but only if no other instance
   //    already owns the WhatsApp connection. This prevents status 515/440
