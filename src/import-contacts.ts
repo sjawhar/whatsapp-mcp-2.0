@@ -20,9 +20,8 @@ import path from "path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 
-const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const DB_PATH = path.join(__project_root, "store", "whatsapp.db");
-const CONTACTS_DIR = path.join(__project_root, "contacts");
+import { STORE_DIR, CONTACTS_DIR } from "./paths.js";
+const DB_PATH = path.join(STORE_DIR, "whatsapp.db");
 const DEFAULT_VCF = path.join(CONTACTS_DIR, "contacts.vcf");
 
 // ─── VCF Parser ─────────────────────────────────────────────────────

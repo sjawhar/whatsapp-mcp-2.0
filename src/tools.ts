@@ -18,6 +18,7 @@ import {
   deleteChat,
   updateContact,
   getMyInfo,
+  resolveUnknownContacts,
 } from "./whatsapp.js";
 import { getDb } from "./db.js";
 import { importContactsFromVcf } from "./import-contacts.js";
@@ -435,6 +436,29 @@ export function registerTools(server: McpServer): void {
         const result = await transcribeVoiceNote(jid, messageId);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "resolve_contacts",
+    "Resolve unknown LID contacts to phone numbers and refresh contact names from WhatsApp. " +
+    "Run this after initial QR pairing to populate contact info. " +
+    "Pass resync=true to trigger a full contact name refresh from WhatsApp servers (slow, use sparingly).",
+    {
+      resync: z.boolean().default(false).describe("Trigger a full contact name sync from WhatsApp (slow, use sparingly)"),
+    },
+    async ({ resync }) => {
+      try {
+        const result = await resolveUnknownContacts(resync);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({
+            ...result,
+            message: `${result.alreadyMapped} LID contacts have phone mappings. ${result.resolved} names cross-populated. ${result.stillUnresolved} LIDs still unresolved.${resync ? ' Contact sync triggered — names should update over the next few minutes.' : ' Pass resync=true to trigger a fresh contact sync from WhatsApp.'}`,
+          }, null, 2) }],
         };
       } catch (err: any) {
         return { content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true };

@@ -1,13 +1,31 @@
 {
-  "name": "whatsapp-mcp",
-  "version": "1.0.0",
-  "engines": { "node": ">=18.0.0" },
-  "description": "WhatsApp MCP server built with Baileys",
+  "name": "@sjawhar/whatsapp-mcp",
+  "version": "2.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "description": "Security-hardened WhatsApp MCP server built with Baileys",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sjawhar/whatsapp-mcp-2.0.git"
+  },
+  "files": [
+    "dist/",
+    "patches/"
+  ],
+  "bin": {
+    "whatsapp-mcp": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "main": "dist/index.js",
   "scripts": {
-    "postinstall": "patch-package",
     "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "postinstall": "npx --yes patch-package || true",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "import-contacts": "node dist/import-contacts.js",
@@ -16,9 +34,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.26.0",
-    "@whiskeysockets/baileys": "6.7.21",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "12.6.2",
-    "node-cache": "5.1.2",
+    "patch-package": "8.0.1",
     "pino": "9.14.0",
     "qrcode-terminal": "0.12.0",
     "zod": "3.25.76"
@@ -27,7 +45,6 @@
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "22.19.11",
     "@vitest/coverage-v8": "4.1.1",
-    "patch-package": "8.0.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vitest": "4.1.1"

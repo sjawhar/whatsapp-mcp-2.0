@@ -1,13 +1,13 @@
+#!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import path from "path";
 import { initDb, closeDb } from "./db.js";
 import { initWhatsApp, closeWhatsApp, resolveConnectionAsReadOnly } from "./whatsapp.js";
 import { registerTools } from "./tools.js";
 import { acquireWhatsAppLock, releaseWhatsAppLock } from "./lock.js";
+import { LOCK_FILE, DATA_DIR } from "./paths.js";
 
-const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const LOCK_FILE = path.join(__project_root, "store", ".whatsapp.lock");
+console.error(`Data directory: ${DATA_DIR}`);
 
 async function main() {
   console.error("Starting WhatsApp MCP Server...");

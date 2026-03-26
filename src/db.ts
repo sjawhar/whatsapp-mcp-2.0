@@ -3,9 +3,8 @@ import type { WAMessage } from "@whiskeysockets/baileys";
 import fs from "fs";
 import path from "path";
 import { fromJid, formatMessageRow } from "./utils.js";
+import { STORE_DIR } from "./paths.js";
 
-const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const STORE_DIR = path.join(__project_root, "store");
 const DB_PATH = path.join(STORE_DIR, "whatsapp.db");
 
 let db: Database.Database;
@@ -258,6 +257,19 @@ export function getPhoneJid(lidJid: string): string | null {
 export function getLidJid(phoneJid: string): string | null {
   const row = db.prepare(`SELECT lid_jid FROM jid_mapping WHERE phone_jid = ?`).get(phoneJid) as { lid_jid: string } | undefined;
   return row?.lid_jid || null;
+}
+
+export function getUnmappedLidJids(): string[] {
+  const rows = db.prepare(`
+    SELECT DISTINCT c.jid FROM chats c
+    WHERE c.jid LIKE '%@lid'
+    AND c.jid NOT IN (SELECT lid_jid FROM jid_mapping)
+    UNION
+    SELECT DISTINCT co.jid FROM contacts co
+    WHERE co.jid LIKE '%@lid'
+    AND co.jid NOT IN (SELECT lid_jid FROM jid_mapping)
+  `).all() as { jid: string }[];
+  return rows.map(r => r.jid);
 }
 
 /**

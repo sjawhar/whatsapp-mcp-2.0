@@ -10,7 +10,6 @@ import makeWASocket, {
 import type { WASocket, AuthenticationCreds, AuthenticationState, SignalDataTypeMap } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
-import NodeCache from "node-cache";
 import fs from "fs";
 import path from "path";
 import {
@@ -24,9 +23,8 @@ import {
 import * as db from "./db.js";
 import { transcribeAudio } from "./transcribe.js";
 
-const __project_root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const AUTH_DIR = path.join(__project_root, "auth_info");
-const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || "./downloads/";
+import { AUTH_DIR, DOWNLOADS_DIR as DEFAULT_DOWNLOADS_DIR } from "./paths.js";
+const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || DEFAULT_DOWNLOADS_DIR;
 const parsedMaxReconnectAttempts = Number(process.env.MAX_RECONNECT_ATTEMPTS || "10");
 const MAX_RECONNECT_ATTEMPTS = Number.isFinite(parsedMaxReconnectAttempts) && parsedMaxReconnectAttempts > 0
   ? Math.floor(parsedMaxReconnectAttempts)
@@ -201,6 +199,86 @@ export function getMyInfo(): { jid: string | null; lidJid: string | null; name: 
     lidJid: myLidJid,
     name: myName || "You",
     phone: normalizedJid ? fromJid(normalizedJid) : null,
+  };
+}
+
+export async function resolveUnknownContacts(resync: boolean = false): Promise<{
+  resolved: number;
+  alreadyMapped: number;
+  stillUnresolved: number;
+  total: number;
+}> {
+  await connectionReady;
+  if (!sock) throw new Error('WhatsApp not connected');
+
+  // Step 1: Trigger app state resync to get fresh contacts + LID mappings
+  if (resync) {
+    try {
+      console.error('Triggering app state resync...');
+      await sock.resyncAppState(['regular_high', 'regular_low'], false);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    } catch (err) {
+      console.error('App state resync failed:', err);
+    }
+  }
+
+  // Step 2: Resolve unmapped LIDs via Baileys' LID mapping store
+  const unmappedLids = db.getUnmappedLidJids();
+  let resolved = 0;
+  let failed = 0;
+
+  for (const lid of unmappedLids) {
+    try {
+      const pn = await sock.signalRepository.lidMapping.getPNForLID(lid);
+      if (pn) {
+        db.saveJidMapping(lid, pn);
+        // Cross-populate contact name
+        const lidName = db.getContactName(lid);
+        if (lidName) {
+          db.upsertContact(pn, lidName, null);
+          db.upsertChat(pn, lidName, null, null);
+        }
+        resolved++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+
+  // Step 3: Cross-populate names for already-mapped LIDs
+  const allLidChats = db.getDb().prepare(`
+    SELECT DISTINCT jid FROM chats WHERE jid LIKE '%@lid'
+    UNION
+    SELECT DISTINCT jid FROM contacts WHERE jid LIKE '%@lid'
+  `).all() as { jid: string }[];
+
+  let namesCrossPopulated = 0;
+  let alreadyMapped = 0;
+  for (const { jid } of allLidChats) {
+    const phoneJid = db.getPhoneJid(jid);
+    if (phoneJid) {
+      alreadyMapped++;
+      const lidName = db.getContactName(jid);
+      const phoneName = db.getContactName(phoneJid);
+      if (lidName && !phoneName) {
+        db.upsertContact(phoneJid, lidName, null);
+        db.upsertChat(phoneJid, lidName, null, null);
+        namesCrossPopulated++;
+      } else if (phoneName && !lidName) {
+        db.upsertContact(jid, phoneName, null);
+        db.upsertChat(jid, phoneName, null, null);
+        namesCrossPopulated++;
+      }
+    }
+  }
+
+  return {
+    resolved,
+    alreadyMapped: alreadyMapped + resolved,
+    stillUnresolved: failed,
+    total: unmappedLids.length,
   };
 }
 
@@ -435,8 +513,6 @@ export async function initWhatsApp(): Promise<void> {
     shouldSyncHistoryMessage: () => isFirstPairing,
     keepAliveIntervalMs: 25_000,
     markOnlineOnConnect: false,
-    msgRetryCounterCache: new NodeCache({ stdTTL: 60, maxKeys: 500 }),
-    userDevicesCache: new NodeCache({ stdTTL: 300, maxKeys: 1000 }),
   });
 
   lastConnectionActivity = Date.now();
@@ -566,10 +642,10 @@ export async function initWhatsApp(): Promise<void> {
     }
 
     // ─── LID ↔ Phone JID Mapping ────────────────────────────
-    if (events["chats.phoneNumberShare"]) {
-      const { lid, jid } = events["chats.phoneNumberShare"];
-      if (lid && jid) {
-        db.saveJidMapping(lid, jid);
+    if (events["lid-mapping.update"]) {
+      const { lid, pn } = events["lid-mapping.update"];
+      if (lid && pn) {
+        db.saveJidMapping(lid, pn);
       }
     }
 
