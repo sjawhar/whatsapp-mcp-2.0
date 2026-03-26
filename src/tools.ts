@@ -20,7 +20,7 @@ import {
   getMyInfo,
   resolveUnknownContacts,
 } from "./whatsapp.js";
-import { getDb } from "./db.js";
+import { getDb, getUnreadChats } from "./db.js";
 import { importContactsFromVcf } from "./import-contacts.js";
 import { validateFilePath } from "./utils.js";
 
@@ -232,19 +232,47 @@ export function registerTools(server: McpServer): void {
     }
   );
 
+  server.tool(
+    "get_unread_messages",
+    "Get all chats with unread messages and their recent messages in one call. " +
+    "Returns each unread chat with its name, unread count, and the last N messages. " +
+    "Use this for a quick \"what did I miss\" summary.",
+    {
+      messagesPerChat: z.number().min(1).max(20).default(5).describe("Number of recent messages to include per chat"),
+    },
+    async ({ messagesPerChat }) => {
+      try {
+        const unreads = getUnreadChats(messagesPerChat);
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              totalChatsWithUnread: unreads.length,
+              chats: unreads,
+            }, null, 2),
+          }],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
   // ─── Writing Tools ──────────────────────────────────────────
 
   server.tool(
     "send_message",
     "Send a text message to a WhatsApp contact or group. " +
+    "Optionally reply to a specific message by providing its ID. " +
     "First call without confirmed=true returns a preview for user approval. " +
     "Call again with confirmed=true to actually send.",
     {
       jid: z.string().describe("Recipient JID (phone@s.whatsapp.net), group JID, or phone number"),
       text: z.string().describe("Message text to send"),
+      quotedMessageId: z.string().optional().describe("Message ID to reply to / quote. Get this from list_messages or search_messages."),
       confirmed: z.boolean().default(false).describe("Set to true to confirm and send the message. When false, returns a preview for user approval."),
     },
-    async ({ jid, text, confirmed }) => {
+    async ({ jid, text, quotedMessageId, confirmed }) => {
       try {
         const recipient = getRecipientInfo(jid);
 
@@ -258,13 +286,14 @@ export function registerTools(server: McpServer): void {
                 phone: recipient.phone,
                 jid: recipient.jid,
                 message: text,
+                quotedMessageId: quotedMessageId || null,
                 instruction: "Show the user who this message will be sent to, their number, and the message content. Ask them to confirm before calling send_message again with confirmed=true.",
               }, null, 2),
             }],
           };
         }
 
-        const result = await sendTextMessage(jid, text);
+        const result = await sendTextMessage(jid, text, quotedMessageId);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
         };

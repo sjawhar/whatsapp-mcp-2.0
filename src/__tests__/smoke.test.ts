@@ -16,9 +16,9 @@ describe("MCP smoke test", () => {
     closeTestDb();
   });
 
-  it("connects MCP client, exposes 16 tools, and returns seeded chats", async () => {
+  it("connects MCP client, exposes 17 tools, and returns seeded chats", async () => {
     const tools = await client.listTools();
-    expect(tools).toHaveLength(16);
+    expect(tools).toHaveLength(17);
 
     const listChats = await client.callTool("list_chats", { limit: 20 });
     expect(Array.isArray(listChats)).toBe(true);

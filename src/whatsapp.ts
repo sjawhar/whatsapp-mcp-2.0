@@ -942,16 +942,30 @@ export function getRecipientInfo(jid: string): { jid: string; name: string | nul
 }
 
 
-export async function sendTextMessage(jid: string, text: string): Promise<Record<string, unknown>> {
+export async function sendTextMessage(jid: string, text: string, quotedMessageId?: string): Promise<Record<string, unknown>> {
   await connectionReady;
   const s = await getSocket();
   const normalJid = toJid(jid);
 
-  const sent = await sendMessageWithHealthCheck(s, normalJid, { text });
+  const msgContent: any = { text };
+
+  if (quotedMessageId) {
+    const blob = db.getMessageBlob(jid, quotedMessageId);
+    if (blob) {
+      try {
+        msgContent.quoted = JSON.parse(blob);
+      } catch {
+        // If blob can't be parsed, send without quote
+      }
+    }
+  }
+
+  const sent = await sendMessageWithHealthCheck(s, normalJid, msgContent);
   return {
     success: true,
     messageId: sent?.key.id,
     to: normalJid,
+    quotedMessageId: quotedMessageId || null,
   };
 }
 

@@ -272,6 +272,28 @@ export function getUnmappedLidJids(): string[] {
   return rows.map(r => r.jid);
 }
 
+export function getUnreadChats(messagesPerChat: number = 5): Record<string, unknown>[] {
+  // Get all chats with unread_count > 0
+  const chats = db.prepare(`
+    SELECT ch.jid, COALESCE(ch.name, co.name, co.notify) AS name,
+      ch.unread_count, ch.conversation_ts
+    FROM chats ch
+    LEFT JOIN contacts co ON ch.jid = co.jid
+    WHERE ch.unread_count > 0
+    ORDER BY ch.conversation_ts DESC
+  `).all() as Array<{ jid: string; name: string | null; unread_count: number; conversation_ts: number }>;
+
+  return chats.map(chat => {
+    const messages = getMessages(chat.jid, messagesPerChat);
+    return {
+      jid: chat.jid,
+      name: chat.name || fromJid(chat.jid),
+      unreadCount: chat.unread_count,
+      recentMessages: messages.reverse(),
+    };
+  });
+}
+
 /**
  * Return all known JIDs for a contact — the input JID plus any mapped counterpart.
  * If a phone JID is given, also returns the LID JID (and vice versa).
