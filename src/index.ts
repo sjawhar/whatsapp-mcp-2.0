@@ -30,7 +30,7 @@ async function main() {
 
   // 3. Initialize WhatsApp in the background — but only if no other instance
   //    already owns the WhatsApp connection. This prevents status 515/440
-  //    when Claude Desktop spawns multiple MCP server instances.
+  //    when the host spawns multiple MCP server instances.
   if (acquireWhatsAppLock(LOCK_FILE)) {
     console.error("WhatsApp lock acquired — connecting...");
     initWhatsApp().catch((err) => {
@@ -39,6 +39,21 @@ async function main() {
   } else {
     console.error("Another instance owns the WhatsApp connection — running as read-only from SQLite");
     resolveConnectionAsReadOnly();
+
+    // Periodically check if the lock holder died — if so, take over
+    const lockRetryInterval = setInterval(() => {
+      if (acquireWhatsAppLock(LOCK_FILE)) {
+        console.error("Lock holder died — upgrading to read-write mode");
+        clearInterval(lockRetryInterval);
+        initWhatsApp().catch((err) => {
+          console.error("Failed to initialize WhatsApp after lock takeover:", err);
+        });
+      }
+    }, 10_000); // Check every 10 seconds
+
+    // Clean up the interval on shutdown
+    process.on("SIGINT", () => clearInterval(lockRetryInterval));
+    process.on("SIGTERM", () => clearInterval(lockRetryInterval));
   }
 
   // 4. Graceful shutdown
