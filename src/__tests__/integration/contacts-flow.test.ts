@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -53,7 +54,10 @@ function parseToolJson(result: RawToolResult): unknown {
 }
 
 describe("integration: contacts flow", () => {
-  const vcfPath = "/home/sami/projects/whatsapp-mcp/contacts/contacts.vcf";
+  // sync_contacts reads from CONTACTS_DIR (resolved at module load from XDG_DATA_HOME)
+  // We import it so we write our test VCF to the right place
+  let contactsDir: string;
+  let vcfPath: string;
 
   let originalVcf: string | null;
   let server: McpServer;
@@ -64,7 +68,11 @@ describe("integration: contacts flow", () => {
     process.env.MIN_SEND_INTERVAL_MS = "0";
     process.env.SEND_JITTER_MS = "0";
 
-    fs.mkdirSync(path.dirname(vcfPath), { recursive: true });
+    const paths = await import("../../paths.js");
+    contactsDir = paths.CONTACTS_DIR;
+    vcfPath = path.join(contactsDir, "contacts.vcf");
+
+    fs.mkdirSync(contactsDir, { recursive: true });
     originalVcf = fs.existsSync(vcfPath) ? fs.readFileSync(vcfPath, "utf8") : null;
     fs.writeFileSync(
       vcfPath,
