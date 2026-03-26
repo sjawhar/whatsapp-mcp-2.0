@@ -28,6 +28,13 @@ async function main() {
   await server.connect(transport);
   console.error("MCP server running on stdio");
 
+  // Detect parent death: when stdin closes (parent killed us or disconnected),
+  // shut down cleanly so we don't become an orphan holding the lock.
+  process.stdin.on('end', () => {
+    console.error('stdin closed (parent disconnected) — shutting down');
+    shutdown();
+  });
+
   // 3. Initialize WhatsApp in the background — but only if no other instance
   //    already owns the WhatsApp connection. This prevents status 515/440
   //    when the host spawns multiple MCP server instances.
