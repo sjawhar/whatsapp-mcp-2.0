@@ -23,7 +23,7 @@ import {
 import * as db from "./db.js";
 import { transcribeAudio } from "./transcribe.js";
 
-import { AUTH_DIR, DOWNLOADS_DIR as DEFAULT_DOWNLOADS_DIR } from "./paths.js";
+import { AUTH_DIR, DOWNLOADS_DIR as DEFAULT_DOWNLOADS_DIR, LOCK_FILE } from "./paths.js";
 const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || DEFAULT_DOWNLOADS_DIR;
 const parsedMaxReconnectAttempts = Number(process.env.MAX_RECONNECT_ATTEMPTS || "10");
 const MAX_RECONNECT_ATTEMPTS = Number.isFinite(parsedMaxReconnectAttempts) && parsedMaxReconnectAttempts > 0
@@ -209,7 +209,7 @@ export async function resolveUnknownContacts(resync: boolean = false): Promise<{
   total: number;
 }> {
   await connectionReady;
-  if (!sock) throw new Error('WhatsApp not connected');
+  if (!sock) throw new Error(getReadOnlyErrorMessage(LOCK_FILE));
 
   // Step 1: Trigger app state resync to get fresh contacts + LID mappings
   if (resync) {
@@ -779,6 +779,23 @@ async function resolveChatName(jid: string): Promise<string | null> {
 
   return null;
 }
+/**
+ * Generate a read-only mode error message with PID info if available.
+ * Reads the lock file to extract the PID of the process holding the connection.
+ * Falls back gracefully if the lock file can't be read.
+ */
+export function getReadOnlyErrorMessage(lockFilePath: string): string {
+  try {
+    const pid = parseInt(fs.readFileSync(lockFilePath, "utf-8").trim(), 10);
+    if (!Number.isNaN(pid)) {
+      return `Running in read-only mode — another process (PID ${pid}) holds the WhatsApp connection. This will auto-recover within 10 seconds if that process dies.`;
+    }
+  } catch {
+    // Lock file missing, unreadable, or PID not a number — fall through to generic message
+  }
+  return "Running in read-only mode — another process holds the WhatsApp connection. This will auto-recover within 10 seconds if that process dies.";
+}
+
 
 async function getSocket(): Promise<WASocket> {
   // During reconnection cycles, sock may be momentarily null while a new
@@ -786,12 +803,7 @@ async function getSocket(): Promise<WASocket> {
   if (!sock) {
     await connectionReady;
   }
-  if (!sock) throw new Error(
-    "WhatsApp socket not available. This instance is running in read-only mode " +
-    "(another MCP server process owns the WhatsApp connection). " +
-    "This operation requires an active WhatsApp connection. Try restarting Claude Desktop, " +
-    "or delete the lock file at store/.whatsapp.lock if the other process is dead."
-  );
+  if (!sock) throw new Error(getReadOnlyErrorMessage(LOCK_FILE));
   return sock;
 }
 

@@ -19,10 +19,12 @@ import {
   updateContact,
   getMyInfo,
   resolveUnknownContacts,
+  getReadOnlyErrorMessage,
 } from "./whatsapp.js";
 import { getDb, getUnreadChats } from "./db.js";
 import { importContactsFromVcf } from "./import-contacts.js";
 import { validateFilePath } from "./utils.js";
+import { LOCK_FILE } from "./paths.js";
 
 /**
  * Register all WhatsApp MCP tools on the server.
@@ -179,7 +181,7 @@ export function registerTools(server: McpServer): void {
           return {
             content: [{
               type: "text" as const,
-              text: "Not connected yet — WhatsApp identity not available. Try again in a moment.",
+              text: getReadOnlyErrorMessage(LOCK_FILE),
             }],
             isError: true,
           };
