@@ -68,13 +68,3 @@ jobs:
         run: npx semantic-release@24
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish to npm
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if npm view "@sjawhar/whatsapp-mcp@${VERSION}" version 2>/dev/null; then
-            echo "v${VERSION} already published, skipping"
-          else
-            echo "Publishing v${VERSION}"
-            npm run build
-            npm publish --provenance --access public
-          fi
