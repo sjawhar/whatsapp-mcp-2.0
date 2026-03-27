@@ -128,7 +128,7 @@ describe("importContactsFromVcf — path containment", () => {
       CREATE TABLE IF NOT EXISTS contacts (jid TEXT PRIMARY KEY, name TEXT, notify TEXT);
     `);
 
-    expect(() => importContactsFromVcf(db, "/etc/passwd")).toThrow(/VCF path not allowed/);
+    expect(() => importContactsFromVcf(db, undefined, "/etc/passwd")).toThrow(/VCF path not allowed/);
     db.close();
   });
 
@@ -139,7 +139,7 @@ describe("importContactsFromVcf — path containment", () => {
       CREATE TABLE IF NOT EXISTS contacts (jid TEXT PRIMARY KEY, name TEXT, notify TEXT);
     `);
 
-    expect(() => importContactsFromVcf(db, "../../../etc/shadow")).toThrow(/VCF path not allowed/);
+    expect(() => importContactsFromVcf(db, undefined, "../../../etc/shadow")).toThrow(/VCF path not allowed/);
     db.close();
   });
 });
