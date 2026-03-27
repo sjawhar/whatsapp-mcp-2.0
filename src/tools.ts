@@ -218,13 +218,16 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "sync_contacts",
-    "Import phone contacts from the contacts/contacts.vcf file into the database. " +
+    "Import phone contacts from a VCF file or string into the database. " +
     "Matches phone numbers from the VCF to existing WhatsApp JIDs and updates their display names. " +
-    "Use this after a fresh QR code scan to populate contact names from your address book.",
-    {},
-    async () => {
+    "Use this after a fresh QR code scan to populate contact names from your address book. " +
+    "Optionally pass vcf_content to sync from a string instead of the default file.",
+    {
+      vcf_content: z.string().optional().describe("Optional VCF content as a string. If provided, syncs from this content instead of reading from file."),
+    },
+    async ({ vcf_content }) => {
       try {
-        const result = importContactsFromVcf(getDb());
+        const result = importContactsFromVcf(getDb(), vcf_content);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
         };

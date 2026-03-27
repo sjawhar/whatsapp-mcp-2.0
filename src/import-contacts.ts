@@ -116,30 +116,45 @@ export interface ImportResult {
 }
 
 /**
- * Import contacts from a VCF file into the database.
+ * Import contacts from a VCF file or string into the database.
  * Can be called from the MCP tool or standalone CLI.
  *
  * @param dbInstance - An open better-sqlite3 database instance.
  *   When called from the MCP server, pass the shared DB.
  *   When called from CLI, opens its own connection.
- * @param vcfPath - Path to the .vcf file. Defaults to contacts/contacts.vcf.
+ * @param vcfContent - Optional VCF content as a string. If provided, parses this directly.
+ *   If not provided, reads from vcfPath (defaults to contacts/contacts.vcf).
+ * @param vcfPath - Path to the .vcf file. Only used if vcfContent is not provided.
+ *   Defaults to contacts/contacts.vcf.
  */
-export function importContactsFromVcf(dbInstance: Database.Database, vcfPath?: string): ImportResult {
-  const absPath = path.resolve(vcfPath || DEFAULT_VCF);
+export function importContactsFromVcf(dbInstance: Database.Database, vcfContent?: string, vcfPath?: string): ImportResult {
+  let content: string;
+  let absPath: string;
 
-  // Containment check: VCF path must be inside the allowed contacts directory
-  const allowedBase = path.resolve(process.env.CONTACTS_DIR || CONTACTS_DIR);
-  const allowedPrefix = `${allowedBase}${path.sep}`;
-  if (!absPath.startsWith(allowedPrefix)) {
-    throw new Error(`VCF path not allowed: must be within ${allowedBase}`);
+  if (vcfContent) {
+    // Use provided VCF content directly
+    content = vcfContent;
+    absPath = "[provided-content]";
+  } else {
+    // Read from file
+    const filePath = vcfPath || DEFAULT_VCF;
+    absPath = path.resolve(filePath);
+
+    // Containment check: VCF path must be inside the allowed contacts directory
+    const allowedBase = path.resolve(process.env.CONTACTS_DIR || CONTACTS_DIR);
+    const allowedPrefix = `${allowedBase}${path.sep}`;
+    if (!absPath.startsWith(allowedPrefix)) {
+      throw new Error(`VCF path not allowed: must be within ${allowedBase}`);
+    }
+
+    if (!fs.existsSync(absPath)) {
+      throw new Error(`VCF file not found: ${absPath}`);
+    }
+
+    // Parse VCF
+    content = fs.readFileSync(absPath, "utf-8");
   }
 
-  if (!fs.existsSync(absPath)) {
-    throw new Error(`VCF file not found: ${absPath}`);
-  }
-
-  // Parse VCF
-  const content = fs.readFileSync(absPath, "utf-8");
   const contacts = parseVcf(content);
 
   // Build lookup maps for all known JIDs (from chats and contacts tables)
@@ -276,7 +291,7 @@ function main() {
   const db = new Database(DB_PATH);
   db.pragma("journal_mode = WAL");
 
-  const result = importContactsFromVcf(db, absPath);
+  const result = importContactsFromVcf(db, undefined, absPath);
 
   console.log(`Parsed ${result.totalParsed} contacts with phone numbers from VCF`);
   console.log(`\nMatched ${result.totalUpdated} phone numbers to existing WhatsApp JIDs`);
