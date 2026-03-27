@@ -93,7 +93,15 @@ function createTables() {
       phone_jid TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_jid_mapping_phone ON jid_mapping(phone_jid);
-  `);
+
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id              INTEGER PRIMARY KEY CHECK (id = 1),
+      jid             TEXT NOT NULL,
+      lid_jid         TEXT,
+      name            TEXT,
+      updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `)
 
   // Migration: add transcription column for voice note caching
   const hasCol = db.prepare(
@@ -125,6 +133,7 @@ let stmts: {
   deleteChat: Database.Statement;
   deleteMessage: Database.Statement;
   getContactName: Database.Statement;
+  upsertUserProfile: Database.Statement;
 };
 
 function prepareStatements() {
@@ -158,6 +167,15 @@ function prepareStatements() {
     getContactName: db.prepare(`
       SELECT COALESCE(name, notify) AS display FROM contacts WHERE jid = ?
     `),
+    upsertUserProfile: db.prepare(`
+      INSERT INTO user_profile (id, jid, lid_jid, name, updated_at)
+      VALUES (1, @jid, @lid_jid, @name, unixepoch())
+      ON CONFLICT(id) DO UPDATE SET
+        jid = @jid,
+        lid_jid = @lid_jid,
+        name = @name,
+        updated_at = unixepoch()
+    `)
   };
 }
 
@@ -174,6 +192,15 @@ export function upsertChat(jid: string, name?: string | null, conversationTs?: n
 
 export function upsertContact(jid: string, name?: string | null, notify?: string | null) {
   stmts.upsertContact.run({ jid, name: name || null, notify: notify || null });
+}
+
+export function upsertUserProfile(jid: string, lidJid: string | null, name: string | null): void {
+  stmts.upsertUserProfile.run({ jid, lid_jid: lidJid || null, name: name || null });
+}
+
+export function getUserProfile(): { jid: string; lid_jid: string | null; name: string | null } | null {
+  const row = db.prepare(`SELECT jid, lid_jid, name FROM user_profile WHERE id = 1`).get() as { jid: string; lid_jid: string | null; name: string | null } | undefined;
+  return row || null;
 }
 
 function resolveSenderName(senderJid: string | null): string | null {

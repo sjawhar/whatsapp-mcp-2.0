@@ -12,6 +12,7 @@
   },
   "files": [
     "dist/",
+    "!dist/__tests__/",
     "patches/"
   ],
   "bin": {

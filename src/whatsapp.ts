@@ -193,12 +193,34 @@ let myName: string | null = null;
 let myLidJid: string | null = null;
 
 export function getMyInfo(): { jid: string | null; lidJid: string | null; name: string | null; phone: string | null } {
-  const normalizedJid = myJid ? myJid.replace(/:\d+@/, "@") : null;
+  // Try live data first
+  if (myJid) {
+    const normalizedJid = myJid.replace(/:\d+@/, "@");
+    return {
+      jid: normalizedJid,
+      lidJid: myLidJid,
+      name: myName || "You",
+      phone: normalizedJid ? fromJid(normalizedJid) : null,
+    };
+  }
+
+  // Fall back to cached profile when socket is null (read-only mode)
+  const cached = db.getUserProfile();
+  if (cached) {
+    return {
+      jid: cached.jid,
+      lidJid: cached.lid_jid,
+      name: cached.name || "You",
+      phone: cached.jid ? fromJid(cached.jid) : null,
+    };
+  }
+
+  // No live socket and no cache
   return {
-    jid: normalizedJid,
-    lidJid: myLidJid,
-    name: myName || "You",
-    phone: normalizedJid ? fromJid(normalizedJid) : null,
+    jid: null,
+    lidJid: null,
+    name: null,
+    phone: null,
   };
 }
 
@@ -570,6 +592,8 @@ export async function initWhatsApp(): Promise<void> {
             db.upsertContact(myLidJid, displayName, myName);
             db.upsertChat(myLidJid, displayName, null, null);
           }
+          // Cache user profile for read-only mode fallback
+          db.upsertUserProfile(normalizedJid, myLidJid, displayName);
         }
 
         console.error("Connection ready");
