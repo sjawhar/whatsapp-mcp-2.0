@@ -1,155 +1,108 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("profile cache", () => {
-  let tmpDir: string;
-  let dbPath: string;
-  let db: Database.Database;
+// Mock db.js before importing whatsapp.ts
+vi.mock("../db.js", () => ({
+  getUserProfile: vi.fn(),
+  getUnmappedLidJids: vi.fn(() => []),
+  getPhoneJid: vi.fn(),
+  getLidJid: vi.fn(),
+  getContactName: vi.fn(),
+  getDb: vi.fn(),
+  upsertChat: vi.fn(),
+  upsertContact: vi.fn(),
+  upsertMessage: vi.fn(),
+  upsertMessages: vi.fn(),
+  upsertChats: vi.fn(),
+  upsertContacts: vi.fn(),
+  upsertUserProfile: vi.fn(),
+  deleteChat: vi.fn(),
+  deleteMessage: vi.fn(),
+  saveJidMapping: vi.fn(),
+  resolveDisplayName: vi.fn(),
+  getChats: vi.fn(),
+  getMessages: vi.fn(),
+  getUnreadChats: vi.fn(),
+  getAllJidsFor: vi.fn(),
+  getMessageFromMe: vi.fn(),
+}));
 
+// Import AFTER vi.mock
+import { getMyInfo } from "../whatsapp.js";
+import * as db from "../db.js";
+
+describe("getMyInfo cached profile fallback", () => {
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wa-profile-test-"));
-    dbPath = path.join(tmpDir, "test.db");
-    db = new Database(dbPath);
-    // Create the user_profile table manually for testing
-    db.exec(`
-      CREATE TABLE user_profile (
-        id              INTEGER PRIMARY KEY CHECK (id = 1),
-        jid             TEXT NOT NULL,
-        lid_jid         TEXT,
-        name            TEXT,
-        updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-    `);
+    vi.clearAllMocks();
   });
 
-  afterEach(() => {
-    try {
-      db.close();
-    } catch {}
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  it("returns cached profile when socket is null and cache exists", () => {
+    const mockProfile = {
+      jid: "971525527198@s.whatsapp.net",
+      lid_jid: null,
+      name: "Test User",
+    };
+    (db.getUserProfile as any).mockReturnValue(mockProfile);
+
+    const info = getMyInfo();
+    expect(info.jid).toBe("971525527198@s.whatsapp.net");
+    expect(info.name).toBe("Test User");
+    expect(info.phone).toBe("971525527198"); // extracted from jid
+    expect(info.lidJid).toBeNull();
   });
 
-  it("upserts user profile with all fields", () => {
-    const jid = "1234567890@s.whatsapp.net";
-    const lidJid = "1234567890@lid";
-    const name = "Test User";
+  it("returns cached profile with lid_jid when available", () => {
+    const mockProfile = {
+      jid: "971525527198@s.whatsapp.net",
+      lid_jid: "971525527198@lid",
+      name: "Test User",
+    };
+    (db.getUserProfile as any).mockReturnValue(mockProfile);
 
-    const stmt = db.prepare(`
-      INSERT INTO user_profile (id, jid, lid_jid, name, updated_at)
-      VALUES (1, ?, ?, ?, unixepoch())
-      ON CONFLICT(id) DO UPDATE SET
-        jid = excluded.jid,
-        lid_jid = excluded.lid_jid,
-        name = excluded.name,
-        updated_at = unixepoch()
-    `);
-    stmt.run(jid, lidJid, name);
-
-    const profile = db.prepare("SELECT jid, lid_jid, name FROM user_profile WHERE id = 1").get() as { jid: string; lid_jid: string | null; name: string | null };
-    expect(profile).not.toBeNull();
-    expect(profile.jid).toBe(jid);
-    expect(profile.lid_jid).toBe(lidJid);
-    expect(profile.name).toBe(name);
+    const info = getMyInfo();
+    expect(info.jid).toBe("971525527198@s.whatsapp.net");
+    expect(info.lidJid).toBe("971525527198@lid");
+    expect(info.name).toBe("Test User");
+    expect(info.phone).toBe("971525527198");
   });
 
-  it("upserts user profile with null lid_jid", () => {
-    const jid = "1234567890@s.whatsapp.net";
-    const name = "Test User";
+  it("returns 'You' as default name when cached name is null", () => {
+    const mockProfile = {
+      jid: "971525527198@s.whatsapp.net",
+      lid_jid: null,
+      name: null,
+    };
+    (db.getUserProfile as any).mockReturnValue(mockProfile);
 
-    const stmt = db.prepare(`
-      INSERT INTO user_profile (id, jid, lid_jid, name, updated_at)
-      VALUES (1, ?, ?, ?, unixepoch())
-      ON CONFLICT(id) DO UPDATE SET
-        jid = excluded.jid,
-        lid_jid = excluded.lid_jid,
-        name = excluded.name,
-        updated_at = unixepoch()
-    `);
-    stmt.run(jid, null, name);
-
-    const profile = db.prepare("SELECT jid, lid_jid, name FROM user_profile WHERE id = 1").get() as { jid: string; lid_jid: string | null; name: string | null };
-    expect(profile).not.toBeNull();
-    expect(profile.jid).toBe(jid);
-    expect(profile.lid_jid).toBeNull();
-    expect(profile.name).toBe(name);
+    const info = getMyInfo();
+    expect(info.name).toBe("You");
   });
 
-  it("upserts user profile with null name", () => {
-    const jid = "1234567890@s.whatsapp.net";
-    const lidJid = "1234567890@lid";
+  it("returns all null fields when no socket and no cache", () => {
+    (db.getUserProfile as any).mockReturnValue(null);
 
-    const stmt = db.prepare(`
-      INSERT INTO user_profile (id, jid, lid_jid, name, updated_at)
-      VALUES (1, ?, ?, ?, unixepoch())
-      ON CONFLICT(id) DO UPDATE SET
-        jid = excluded.jid,
-        lid_jid = excluded.lid_jid,
-        name = excluded.name,
-        updated_at = unixepoch()
-    `);
-    stmt.run(jid, lidJid, null);
-
-    const profile = db.prepare("SELECT jid, lid_jid, name FROM user_profile WHERE id = 1").get() as { jid: string; lid_jid: string | null; name: string | null };
-    expect(profile).not.toBeNull();
-    expect(profile.jid).toBe(jid);
-    expect(profile.lid_jid).toBe(lidJid);
-    expect(profile.name).toBeNull();
+    const info = getMyInfo();
+    expect(info.jid).toBeNull();
+    expect(info.name).toBeNull();
+    expect(info.phone).toBeNull();
+    expect(info.lidJid).toBeNull();
   });
 
-  it("replaces existing profile on second upsert", () => {
-    const jid1 = "1111111111@s.whatsapp.net";
-    const jid2 = "2222222222@s.whatsapp.net";
-    const name1 = "User One";
-    const name2 = "User Two";
+  it("extracts phone number correctly from jid", () => {
+    const mockProfile = {
+      jid: "1234567890@s.whatsapp.net",
+      lid_jid: null,
+      name: "Another User",
+    };
+    (db.getUserProfile as any).mockReturnValue(mockProfile);
 
-    const stmt = db.prepare(`
-      INSERT INTO user_profile (id, jid, lid_jid, name, updated_at)
-      VALUES (1, ?, ?, ?, unixepoch())
-      ON CONFLICT(id) DO UPDATE SET
-        jid = excluded.jid,
-        lid_jid = excluded.lid_jid,
-        name = excluded.name,
-        updated_at = unixepoch()
-    `);
-
-    stmt.run(jid1, null, name1);
-    let profile = db.prepare("SELECT jid, lid_jid, name FROM user_profile WHERE id = 1").get() as { jid: string; lid_jid: string | null; name: string | null };
-    expect(profile.jid).toBe(jid1);
-    expect(profile.name).toBe(name1);
-
-    // Upsert again with different data
-    stmt.run(jid2, null, name2);
-    profile = db.prepare("SELECT jid, lid_jid, name FROM user_profile WHERE id = 1").get() as { jid: string; lid_jid: string | null; name: string | null };
-    expect(profile.jid).toBe(jid2);
-    expect(profile.name).toBe(name2);
+    const info = getMyInfo();
+    expect(info.phone).toBe("1234567890");
   });
 
-  it("returns null when no profile exists", () => {
-    const profile = db.prepare("SELECT jid, lid_jid, name FROM user_profile WHERE id = 1").get();
-    expect(profile).toBeUndefined();
-  });
+  it("returns null phone when jid is null", () => {
+    (db.getUserProfile as any).mockReturnValue(null);
 
-  it("maintains singleton constraint (only one row with id=1)", () => {
-    const stmt = db.prepare(`
-      INSERT INTO user_profile (id, jid, lid_jid, name, updated_at)
-      VALUES (1, ?, ?, ?, unixepoch())
-      ON CONFLICT(id) DO UPDATE SET
-        jid = excluded.jid,
-        lid_jid = excluded.lid_jid,
-        name = excluded.name,
-        updated_at = unixepoch()
-    `);
-
-    stmt.run("1111111111@s.whatsapp.net", null, "User One");
-    stmt.run("2222222222@s.whatsapp.net", null, "User Two");
-
-    const rows = db.prepare("SELECT COUNT(*) as cnt FROM user_profile").get() as { cnt: number };
-    expect(rows.cnt).toBe(1);
-
-    const profile = db.prepare("SELECT jid FROM user_profile WHERE id = 1").get() as { jid: string };
-    expect(profile.jid).toBe("2222222222@s.whatsapp.net");
+    const info = getMyInfo();
+    expect(info.phone).toBeNull();
   });
 });
