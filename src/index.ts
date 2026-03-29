@@ -30,8 +30,8 @@ type CliOptions = {
 
 function parseCliOptions(argv: string[]): CliOptions {
   let http = false;
-  let port = 3000;
-  let host = "127.0.0.1";
+  let port = 3456;
+  let host = "0.0.0.0";
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
