@@ -5,6 +5,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { registerTools } from "./tools.js";
+import {
+  createResourceSubscriptionStore,
+  registerResourceSubscriptionHandlers,
+  registerResources,
+  type ResourceSubscriptionStore,
+} from "./resources.js";
 
 type SessionState = {
   transport: StreamableHTTPServerTransport;
@@ -93,7 +99,7 @@ function createBearerAuthMiddleware(apiKey: string) {
   };
 }
 
-function wirePostRoute(app: express.Express, sessions: SessionMap): void {
+function wirePostRoute(app: express.Express, sessions: SessionMap, subscriptions: ResourceSubscriptionStore): void {
   app.post("/mcp", async (req: Request, res: Response) => {
     try {
       const sessionId = req.header("mcp-session-id");
@@ -105,13 +111,19 @@ function wirePostRoute(app: express.Express, sessions: SessionMap): void {
       }
 
       if (!sessionId && isInitializeRequest(req.body)) {
-        const server = new McpServer({ name: "whatsapp", version: "1.0.0" });
+        const server = new McpServer(
+          { name: "whatsapp", version: "1.0.0" },
+          { capabilities: { resources: { subscribe: true, listChanged: true } } }
+        );
         registerTools(server);
+        registerResources(server);
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (id) => {
             sessions.set(id, { transport, server });
+            subscriptions.registerSession(id, (uri) => server.server.sendResourceUpdated({ uri }));
+            registerResourceSubscriptionHandlers(server, id, subscriptions);
           },
         });
 
@@ -119,6 +131,7 @@ function wirePostRoute(app: express.Express, sessions: SessionMap): void {
           const id = transport.sessionId;
           if (id) {
             sessions.delete(id);
+            subscriptions.removeSession(id);
           }
         };
 
@@ -169,7 +182,12 @@ function wireGetAndDeleteRoutes(app: express.Express, sessions: SessionMap): voi
   app.delete("/mcp", handler);
 }
 
-export async function createHttpServer(port: number, host: string, apiKey: string): Promise<HttpServerController> {
+export async function createHttpServer(
+  port: number,
+  host: string,
+  apiKey: string,
+  subscriptions: ResourceSubscriptionStore = createResourceSubscriptionStore()
+): Promise<HttpServerController> {
   const sessions: SessionMap = new Map();
   const app = express();
 
@@ -177,7 +195,7 @@ export async function createHttpServer(port: number, host: string, apiKey: strin
   app.use(createHostValidationMiddleware(host));
   app.use(createBearerAuthMiddleware(apiKey));
 
-  wirePostRoute(app, sessions);
+  wirePostRoute(app, sessions, subscriptions);
   wireGetAndDeleteRoutes(app, sessions);
 
   const httpServer = createServer(app);
@@ -196,7 +214,7 @@ export async function createHttpServer(port: number, host: string, apiKey: strin
   }
 
   const closeHttpServer = async (): Promise<void> => {
-    await closeSessions(sessions);
+    await closeSessions(sessions, subscriptions);
     await closeNodeServer(httpServer);
   };
 
@@ -207,9 +225,14 @@ export async function createHttpServer(port: number, host: string, apiKey: strin
   };
 }
 
-async function closeSessions(sessions: SessionMap): Promise<void> {
+async function closeSessions(sessions: SessionMap, subscriptions: ResourceSubscriptionStore): Promise<void> {
   const states = [...sessions.values()];
+  const ids = [...sessions.keys()];
   sessions.clear();
+
+  for (const id of ids) {
+    subscriptions.removeSession(id);
+  }
 
   for (const { transport, server } of states) {
     await transport.close();

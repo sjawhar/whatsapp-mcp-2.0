@@ -481,6 +481,24 @@ export function getMessages(jid: string, limit: number = 50): Record<string, unk
   return rows.map(formatMessageRow);
 }
 
+export function getRecentMessages(limit: number = 10): Record<string, unknown>[] {
+  const rows = db.prepare(`
+    SELECT id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media
+    FROM messages
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `).all(limit) as Array<{
+    id: string; chat_jid: string; from_me: number; sender_jid: string | null;
+    sender_name: string | null; type: string; text: string | null;
+    timestamp: number; has_media: number;
+  }>;
+
+  return rows.map((r) => ({
+    ...formatMessageRow(r),
+    chat: r.chat_jid,
+  }));
+}
+
 export function searchMessages(query: string, jid?: string): Record<string, unknown>[] {
   let sql = `
     SELECT id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media

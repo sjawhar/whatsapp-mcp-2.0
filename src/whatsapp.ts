@@ -185,6 +185,11 @@ let zombieWatchdog: ReturnType<typeof setInterval> | null = null;
 let lastConnectionActivity = Date.now();
 let consecutiveSendFailures = 0;
 let preKeyPruneInterval: ReturnType<typeof setInterval> | null = null;
+let messageNotificationHandler: (() => void) | undefined;
+
+export function setMessageNotificationHandler(callback: (() => void) | undefined): void {
+  messageNotificationHandler = callback;
+}
 
 // ─── User Identity ──────────────────────────────────────────────────
 
@@ -730,6 +735,10 @@ export async function initWhatsApp(): Promise<void> {
         const msgTs = Number(msg.messageTimestamp || 0);
         const chatName = (!msg.key.fromMe && !jid.endsWith("@g.us") && pushName) ? pushName : null;
         db.upsertChat(jid, chatName, msgTs, msg.key.fromMe ? null : undefined);
+      }
+
+      if (newMsgs.length > 0) {
+        messageNotificationHandler?.();
       }
     }
 

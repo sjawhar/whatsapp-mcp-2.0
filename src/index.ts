@@ -1,13 +1,25 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import fs from "fs";
 import { initDb, closeDb } from "./db.js";
-import { initWhatsApp, closeWhatsApp, resolveConnectionAsReadOnly } from "./whatsapp.js";
+import {
+  initWhatsApp,
+  closeWhatsApp,
+  resolveConnectionAsReadOnly,
+  setMessageNotificationHandler,
+} from "./whatsapp.js";
 import { registerTools } from "./tools.js";
 import { acquireWhatsAppLock, releaseWhatsAppLock } from "./lock.js";
 import { LOCK_FILE, DATA_DIR } from "./paths.js";
 import { createHttpServer, type HttpServerController } from "./http-server.js";
+import {
+  NEW_MESSAGES_RESOURCE_URI,
+  createResourceSubscriptionStore,
+  registerResourceSubscriptionHandlers,
+  registerResources,
+} from "./resources.js";
 console.error(`Data directory: ${DATA_DIR}`);
 
 type CliOptions = {
@@ -76,10 +88,24 @@ async function main() {
   const options = parseCliOptions(process.argv.slice(2));
   let stdioServer: McpServer | undefined;
   let httpController: HttpServerController | undefined;
+  let stdioSessionId: string | undefined;
   let parentWatchdog: NodeJS.Timeout | undefined;
   let lockRetryInterval: NodeJS.Timeout | undefined;
   let ownsWhatsAppLock = false;
   let shuttingDown = false;
+  const resourceSubscriptions = createResourceSubscriptionStore();
+  let debouncedNotificationTimer: NodeJS.Timeout | undefined;
+
+  setMessageNotificationHandler(() => {
+    if (debouncedNotificationTimer) {
+      clearTimeout(debouncedNotificationTimer);
+    }
+
+    debouncedNotificationTimer = setTimeout(() => {
+      debouncedNotificationTimer = undefined;
+      void resourceSubscriptions.notifyResourceUpdated(NEW_MESSAGES_RESOURCE_URI);
+    }, 500);
+  });
 
   // 1. Initialize SQLite database (synchronous, instant).
   initDb();
@@ -99,6 +125,11 @@ async function main() {
       clearInterval(lockRetryInterval);
       lockRetryInterval = undefined;
     }
+    if (debouncedNotificationTimer) {
+      clearTimeout(debouncedNotificationTimer);
+      debouncedNotificationTimer = undefined;
+    }
+    setMessageNotificationHandler(undefined);
 
     await closeWhatsApp();
     if (ownsWhatsAppLock) {
@@ -110,6 +141,10 @@ async function main() {
       await httpController.closeHttpServer();
     }
     if (stdioServer) {
+      if (stdioSessionId) {
+        resourceSubscriptions.removeSession(stdioSessionId);
+        stdioSessionId = undefined;
+      }
       await stdioServer.close();
     }
 
@@ -122,7 +157,7 @@ async function main() {
       throw new Error("MCP_API_KEY is required when using --http mode");
     }
 
-    httpController = await createHttpServer(options.port, options.host, apiKey);
+    httpController = await createHttpServer(options.port, options.host, apiKey, resourceSubscriptions);
     console.error(`MCP server running on HTTP ${options.host}:${httpController.port}`);
 
     initWhatsApp().catch((err) => {
@@ -131,15 +166,30 @@ async function main() {
   } else {
     // 2. Create MCP server and connect to stdio transport FIRST
     //    so the client doesn't time out waiting for the initialize handshake.
-    stdioServer = new McpServer({
-      name: "whatsapp",
-      version: "1.0.0",
-    });
+    stdioServer = new McpServer(
+      {
+        name: "whatsapp",
+        version: "1.0.0",
+      },
+      {
+        capabilities: {
+          resources: {
+            subscribe: true,
+            listChanged: true,
+          },
+        },
+      }
+    );
+    const activeStdioServer = stdioServer;
 
-    registerTools(stdioServer);
+    registerTools(activeStdioServer);
+    registerResources(activeStdioServer);
+    stdioSessionId = `stdio-${randomUUID()}`;
+    resourceSubscriptions.registerSession(stdioSessionId, (uri) => activeStdioServer.server.sendResourceUpdated({ uri }));
+    registerResourceSubscriptionHandlers(activeStdioServer, stdioSessionId, resourceSubscriptions);
 
     const transport = new StdioServerTransport();
-    await stdioServer.connect(transport);
+    await activeStdioServer.connect(transport);
     console.error("MCP server running on stdio");
 
     // Detect parent death via two mechanisms:
