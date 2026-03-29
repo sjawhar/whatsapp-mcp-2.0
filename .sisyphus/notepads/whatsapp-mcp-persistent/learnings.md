@@ -1,0 +1,3 @@
+- 2026-03-29: MCP Streamable HTTP in SDK v1.26.0 requires explicit `Accept` headers (`application/json, text/event-stream` for initialize and `text/event-stream` for SSE GET) or requests can return 406.
+- 2026-03-29: Stateful session handling works cleanly by storing `{ transport, server }` on `onsessioninitialized` and removing sessions via `transport.onclose`.
+- 2026-03-29: HTTP mode should bypass lock-file ownership entirely while preserving existing stdio lock behavior to avoid regressions.
