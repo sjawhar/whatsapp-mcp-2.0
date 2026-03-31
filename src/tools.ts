@@ -34,7 +34,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "list_chats",
-    "List all WhatsApp chats sorted by last activity. Optionally filter by name.",
+    "List all WhatsApp chats sorted by last activity. Optionally filter by name. Contacts with multiple WhatsApp identities are automatically merged into a single entry.",
     {
       nameFilter: z.string().optional().describe("Filter chats by name (case-insensitive substring match)"),
       limit: z.number().min(1).max(100).default(20).describe("Max number of chats to return"),
@@ -76,7 +76,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "list_messages",
-    "Get messages from a specific chat. Returns most recent messages first.",
+    "Get messages from a specific chat. Returns most recent messages first. Accepts any contact identifier. Messages from all of a contact's identities are returned transparently.",
     {
       jid: z.string().describe("Chat JID or phone number"),
       limit: z.number().min(1).max(100).default(50).describe("Number of messages to return"),
@@ -95,7 +95,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "search_messages",
-    "Substring search across messages. Can search in a specific chat or across all chats.",
+    "Substring search across messages. Can search in a specific chat or across all chats. Search results automatically unify contacts with multiple identities into a single canonical entry.",
     {
       query: z.string().describe("Text to search for (case-insensitive)"),
       jid: z.string().optional().describe("Optional: limit search to a specific chat JID"),
@@ -125,7 +125,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "search_contacts",
-    "Find contacts by name or phone number.",
+    "Find contacts by name or phone number. Contacts with multiple WhatsApp identities are automatically deduplicated into a single entry.",
     {
       query: z.string().describe("Name or phone number to search for"),
     },
@@ -239,9 +239,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "get_unread_messages",
-    "Get all chats with unread messages and their recent messages in one call. " +
-    "Returns each unread chat with its name, unread count, and the last N messages. " +
-    "Use this for a quick \"what did I miss\" summary.",
+    "Get all chats with unread messages and their recent messages in one call. Returns each unread chat with its name, unread count, and the last N messages. Contacts with multiple WhatsApp identities are automatically unified into a single view. Use this for a quick \"what did I miss\" summary.",
     {
       messagesPerChat: z.number().min(1).max(20).default(5).describe("Number of recent messages to include per chat"),
     },
@@ -267,10 +265,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "send_message",
-    "Send a text message to a WhatsApp contact or group. " +
-    "Optionally reply to a specific message by providing its ID. " +
-    "First call without confirmed=true returns a preview for user approval. " +
-    "Call again with confirmed=true to actually send.",
+    "Send a text message to a WhatsApp contact or group. Optionally reply to a specific message by providing its ID. First call without confirmed=true returns a preview for user approval. Call again with confirmed=true to actually send. Messages are automatically routed to the contact's most recently active thread.",
     {
       jid: z.string().describe("Recipient JID (phone@s.whatsapp.net), group JID, or phone number"),
       text: z.string().describe("Message text to send"),

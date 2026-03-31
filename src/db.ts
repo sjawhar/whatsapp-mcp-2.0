@@ -478,12 +478,15 @@ export function getChats(nameFilter?: string, limit: number = 100): Record<strin
   const merged = mergeByCanonicalJid(
     rows,
     (r) => r.jid,
-    (existing, incoming) => ({
-      jid: existing.jid,
-      name: existing.name || incoming.name,
-      unread_count: (existing.unread_count || 0) + (incoming.unread_count || 0),
-      effective_ts: Math.max(existing.effective_ts, incoming.effective_ts),
-    })
+    (existing, incoming) => {
+      const canonical = getCanonicalJid(existing.jid);
+      return {
+        jid: canonical,
+        name: existing.name || incoming.name,
+        unread_count: (existing.unread_count || 0) + (incoming.unread_count || 0),
+        effective_ts: Math.max(existing.effective_ts, incoming.effective_ts),
+      };
+    }
   );
 
   // Re-sort by effective_ts after merging

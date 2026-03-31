@@ -531,7 +531,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 6. Fix send routing to use active JID for LID contacts
+- [x] 6. Fix send routing to use active JID for LID contacts
 
   **What to do**:
   - TDD: Write test in `src/__tests__/lid-send-routing.test.ts`:
@@ -606,7 +606,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 7. Fix delete operations for LID-awareness
+- [x] 7. Fix delete operations for LID-awareness
 
   **What to do**:
   - TDD: Write test in `src/__tests__/lid-delete.test.ts`:
@@ -673,7 +673,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 8. Auto-resolve contacts on startup + periodic 30-minute refresh
+- [x] 8. Auto-resolve contacts on startup + periodic 30-minute refresh
 
   **What to do**:
   - TDD: Write test in `src/__tests__/lid-auto-resolve.test.ts`:
