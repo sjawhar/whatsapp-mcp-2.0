@@ -310,7 +310,25 @@ export function getUnreadChats(messagesPerChat: number = 5): Record<string, unkn
     ORDER BY ch.conversation_ts DESC
   `).all() as Array<{ jid: string; name: string | null; unread_count: number; conversation_ts: number }>;
 
-  return chats.map(chat => {
+  // Merge LID chats into their phone JID counterparts to avoid duplicates.
+  const merged = mergeByCanonicalJid(
+    chats,
+    (c) => c.jid,
+    (existing, incoming) => {
+      const canonicalJid = getCanonicalJid(existing.jid);
+      return {
+        jid: canonicalJid,
+        name: existing.name || incoming.name,
+        unread_count: (existing.unread_count || 0) + (incoming.unread_count || 0),
+        conversation_ts: Math.max(existing.conversation_ts, incoming.conversation_ts),
+      };
+    }
+  );
+
+  // Re-sort by conversation_ts after merging
+  const sorted = merged.sort((a, b) => b.conversation_ts - a.conversation_ts);
+
+  return sorted.map(chat => {
     const messages = getMessages(chat.jid, messagesPerChat);
     return {
       jid: chat.jid,
@@ -546,7 +564,7 @@ export function getRecentMessages(limit: number = 10): Record<string, unknown>[]
 
   return rows.map((r) => ({
     ...formatMessageRow(r),
-    chat: r.chat_jid,
+    chat: getCanonicalJid(r.chat_jid),
   }));
 }
 
@@ -576,7 +594,7 @@ export function searchMessages(query: string, jid?: string): Record<string, unkn
 
   return rows.map((r) => ({
     ...formatMessageRow(r),
-    chat: r.chat_jid,
+    chat: getCanonicalJid(r.chat_jid),
   }));
 }
 
@@ -589,10 +607,27 @@ export function searchContacts(query: string): Record<string, unknown>[] {
     jid: string; name: string | null; notify: string | null;
   }>;
 
-  return rows.map((r) => ({
+  // Merge LID contacts into their phone JID counterparts to avoid duplicates.
+  const merged = mergeByCanonicalJid(
+    rows,
+    (r) => r.jid,
+    (existing, incoming) => {
+      // Prefer phone JID over LID JID
+      const existingIsPhone = existing.jid.endsWith("@s.whatsapp.net");
+      const incomingIsPhone = incoming.jid.endsWith("@s.whatsapp.net");
+      const jid = incomingIsPhone && !existingIsPhone ? incoming.jid : existing.jid;
+      return {
+        jid,
+        name: existing.name || incoming.name,
+        notify: existing.notify || incoming.notify,
+      };
+    }
+  );
+
+  return merged.map((r) => ({
     jid: r.jid,
     name: r.name || r.notify || fromJid(r.jid),
-    phone: fromJid(r.jid),
+    phone: fromJid(getCanonicalJid(r.jid)),
     isGroup: r.jid.endsWith("@g.us"),
   }));
 }

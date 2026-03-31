@@ -163,7 +163,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 ## TODOs
 
 
-- [ ] 1. Add `getCanonicalJid()`, `getActiveJid()` helpers + LID test seed data
+- [x] 1. Add `getCanonicalJid()`, `getActiveJid()` helpers + LID test seed data
 
   **What to do**:
   - Add `getCanonicalJid(jid: string): string` to `src/db.ts`:
