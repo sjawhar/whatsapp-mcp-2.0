@@ -745,7 +745,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 9. Update tool descriptions + end-to-end integration test
+- [x] 9. Update tool descriptions + end-to-end integration test
 
   **What to do**:
   - **Tool description updates** in `src/tools.ts`:

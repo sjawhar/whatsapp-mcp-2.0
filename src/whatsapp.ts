@@ -816,6 +816,13 @@ export async function resolveChatName(jid: string): Promise<string | null> {
   const existing = db.getChatName(jid);
   if (existing) return existing;
 
+  // Also check canonical JID
+  const canonicalJid = db.getCanonicalJid(jid);
+  if (canonicalJid !== jid) {
+    const canonicalName = db.getChatName(canonicalJid);
+    if (canonicalName) return canonicalName;
+  }
+
   // For groups, try fetching metadata
   if (jid.endsWith("@g.us") && sock) {
     try {
@@ -835,6 +842,31 @@ export async function resolveChatName(jid: string): Promise<string | null> {
     if (contact) {
       db.upsertChat(jid, contact, null, null);
       return contact;
+    }
+    // For any non-group JID, try other identity variants
+    const allJids = db.getAllJidsFor(jid);
+    for (const otherJid of allJids) {
+      if (otherJid !== jid) {
+        const otherName = db.getChatName(otherJid) || db.getContactName(otherJid);
+        if (otherName) {
+          db.upsertChat(jid, otherName, null, null);
+          return otherName;
+        }
+      }
+    }
+  }
+
+  // For LID JIDs, also check the phone JID variant
+  if (jid.endsWith("@lid")) {
+    const allJids = db.getAllJidsFor(jid);
+    for (const otherJid of allJids) {
+      if (otherJid !== jid) {
+        const otherName = db.getChatName(otherJid) || db.getContactName(otherJid);
+        if (otherName) {
+          db.upsertChat(jid, otherName, null, null);
+          return otherName;
+        }
+      }
     }
   }
 
