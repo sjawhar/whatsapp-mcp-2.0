@@ -337,6 +337,66 @@ export function getAllJidsFor(jid: string): string[] {
   return jids;
 }
 
+/**
+ * Resolve a JID to its canonical form.
+ * If the input is a LID with a mapping, returns the phone JID.
+ * Otherwise returns the input as-is.
+ */
+export function getCanonicalJid(jid: string): string {
+  if (jid.endsWith("@lid")) {
+    const phone = getPhoneJid(jid);
+    return phone || jid;
+  }
+  return jid;
+}
+
+/**
+ * Get the JID with the most recent message activity for a contact.
+ * Useful for routing sends to the active thread.
+ */
+export function getActiveJid(jid: string): string {
+  const jids = getAllJidsFor(jid);
+  if (jids.length === 1) {
+    return jids[0];
+  }
+
+  // Query for the JID with the most recent message
+  const placeholders = jids.map(() => "?").join(", ");
+  const row = db.prepare(`
+    SELECT chat_jid, MAX(timestamp) AS latest
+    FROM messages
+    WHERE chat_jid IN (${placeholders})
+    GROUP BY chat_jid
+    ORDER BY latest DESC
+    LIMIT 1
+  `).get(...jids) as { chat_jid: string; latest: number } | undefined;
+
+  return row?.chat_jid || jid;
+}
+
+/**
+ * Generic helper to deduplicate items by canonical JID.
+ * Merges items with the same canonical JID using a provided merge function.
+ */
+export function mergeByCanonicalJid<T>(
+  items: T[],
+  getJid: (item: T) => string,
+  merge: (existing: T, incoming: T) => T
+): T[] {
+  const map = new Map<string, T>();
+  for (const item of items) {
+    const jid = getJid(item);
+    const canonical = getCanonicalJid(jid);
+    const existing = map.get(canonical);
+    if (existing) {
+      map.set(canonical, merge(existing, item));
+    } else {
+      map.set(canonical, item);
+    }
+  }
+  return [...map.values()];
+}
+
 export function getMessageFromMe(chatJid: string, messageId: string): boolean | null {
   const row = db.prepare(`SELECT from_me FROM messages WHERE chat_jid = ? AND id = ?`).get(chatJid, messageId) as { from_me: number } | undefined;
   if (!row) return null;
@@ -395,28 +455,19 @@ export function getChats(nameFilter?: string, limit: number = 100): Record<strin
   }>;
 
   // Merge LID chats into their phone JID counterparts to avoid duplicates.
-  // If both a LID and phone JID exist for the same contact, keep the phone JID
-  // entry with the latest timestamp from either.
-  const merged = new Map<string, { jid: string; name: string | null; unread_count: number; effective_ts: number }>();
-  for (const r of rows) {
-    let canonicalJid = r.jid;
-    if (r.jid.endsWith("@lid")) {
-      const phone = getPhoneJid(r.jid);
-      if (phone) canonicalJid = phone;
-    }
-    const existing = merged.get(canonicalJid);
-    if (existing) {
-      // Merge: keep the latest timestamp, sum unread, prefer non-null name
-      existing.effective_ts = Math.max(existing.effective_ts, r.effective_ts);
-      existing.unread_count += r.unread_count || 0;
-      if (!existing.name && r.name) existing.name = r.name;
-    } else {
-      merged.set(canonicalJid, { jid: canonicalJid, name: r.name, unread_count: r.unread_count, effective_ts: r.effective_ts });
-    }
-  }
+  const merged = mergeByCanonicalJid(
+    rows,
+    (r) => r.jid,
+    (existing, incoming) => ({
+      jid: existing.jid,
+      name: existing.name || incoming.name,
+      unread_count: (existing.unread_count || 0) + (incoming.unread_count || 0),
+      effective_ts: Math.max(existing.effective_ts, incoming.effective_ts),
+    })
+  );
 
   // Re-sort by effective_ts after merging
-  const result = [...merged.values()].sort((a, b) => b.effective_ts - a.effective_ts);
+  const result = merged.sort((a, b) => b.effective_ts - a.effective_ts);
 
   return result.map((r) => ({
     jid: r.jid,

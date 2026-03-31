@@ -57,6 +57,128 @@ export function seedTestDb(): void {
   );
 }
 
+export function seedLidTestData(): void {
+  if (!dbModule) {
+    throw new Error("setupTestDb() must be called first");
+  }
+
+  const db = dbModule.getDb();
+
+  // Create JID mapping: LID -> phone
+  db.prepare("INSERT INTO jid_mapping (lid_jid, phone_jid) VALUES (?, ?)").run(
+    "169509591765046@lid",
+    "50763345671@s.whatsapp.net"
+  );
+
+  // Create contact entries for both JIDs (same contact, two identities)
+  db.prepare("INSERT INTO contacts (jid, name, notify) VALUES (?, ?, ?)").run(
+    "169509591765046@lid",
+    "Panama Equity",
+    "Panama Equity"
+  );
+
+  db.prepare("INSERT INTO contacts (jid, name, notify) VALUES (?, ?, ?)").run(
+    "50763345671@s.whatsapp.net",
+    "Panama Equity",
+    "Panama Equity"
+  );
+
+  // Create chat entries for both JIDs
+  db.prepare("INSERT INTO chats (jid, name, conversation_ts, unread_count) VALUES (?, ?, ?, ?)").run(
+    "169509591765046@lid",
+    "Panama Equity",
+    1700000100,
+    2
+  );
+
+  db.prepare("INSERT INTO chats (jid, name, conversation_ts, unread_count) VALUES (?, ?, ?, ?)").run(
+    "50763345671@s.whatsapp.net",
+    "Panama Equity",
+    1700000050,
+    1
+  );
+
+  // Messages under the LID JID (incoming)
+  db.prepare(
+    "INSERT INTO messages (id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media, message_blob, transcription) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    "lid-msg-1",
+    "169509591765046@lid",
+    0,
+    "169509591765046@lid",
+    "Panama Equity",
+    "text",
+    "Looking at the apartment tomorrow",
+    1700000100,
+    0,
+    null,
+    null
+  );
+
+  db.prepare(
+    "INSERT INTO messages (id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media, message_blob, transcription) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    "lid-msg-2",
+    "169509591765046@lid",
+    0,
+    "169509591765046@lid",
+    "Panama Equity",
+    "text",
+    "Can you send the deposit?",
+    1700000110,
+    0,
+    null,
+    null
+  );
+
+  // Messages under the phone JID (outgoing)
+  db.prepare(
+    "INSERT INTO messages (id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media, message_blob, transcription) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    "phone-msg-1",
+    "50763345671@s.whatsapp.net",
+    1,
+    "15559990000@s.whatsapp.net",
+    "Me",
+    "text",
+    "Sure, sending now",
+    1700000050,
+    0,
+    null,
+    null
+  );
+
+  // Unmapped LID contact (no jid_mapping entry)
+  db.prepare("INSERT INTO contacts (jid, name, notify) VALUES (?, ?, ?)").run(
+    "999999999@lid",
+    "Unknown Broker",
+    "Unknown Broker"
+  );
+
+  db.prepare("INSERT INTO chats (jid, name, conversation_ts, unread_count) VALUES (?, ?, ?, ?)").run(
+    "999999999@lid",
+    "Unknown Broker",
+    1700000000,
+    0
+  );
+
+  db.prepare(
+    "INSERT INTO messages (id, chat_jid, from_me, sender_jid, sender_name, type, text, timestamp, has_media, message_blob, transcription) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    "unmapped-msg-1",
+    "999999999@lid",
+    0,
+    "999999999@lid",
+    "Unknown Broker",
+    "text",
+    "Interested in the property?",
+    1700000000,
+    0,
+    null,
+    null
+  );
+}
+
 export function closeTestDb(): void {
   if (!dbModule) return;
   dbModule.closeDb();
