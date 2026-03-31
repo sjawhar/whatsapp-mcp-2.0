@@ -63,11 +63,11 @@ Make the WhatsApp MCP present a unified view where each real person has one iden
 - Integration tests for all changes
 
 ### Definition of Done
-- [ ] `vitest run` passes (all existing + new tests)
-- [ ] `tsc --noEmit` passes (no type errors)
-- [ ] Manual QA: `get_unread_messages` shows merged LID/phone unreads for known dual-identity contacts
-- [ ] Manual QA: `search_contacts` for a known LID contact returns one entry with phone JID
-- [ ] Manual QA: `send_message` to a contact with LID activity routes to the active JID
+- [x] `vitest run` passes (177/177 — all existing + new tests)
+- [x] `tsc --noEmit` passes (no type errors)
+- [x] Manual QA: `get_unread_messages` shows merged LID/phone unreads for known dual-identity contacts
+- [x] Manual QA: `search_contacts` for a known LID contact returns one entry with phone JID
+- [x] Manual QA: `send_message` to a contact with LID activity routes to the active JID
 
 ### Must Have
 - All 9 gaps fixed (listed in "GAPS" section of draft)
@@ -836,19 +836,19 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 > 4 review agents run in PARALLEL. ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Read the plan end-to-end. For each "Must Have": verify implementation exists (read file, run function, check output). For each "Must NOT Have": search codebase for forbidden patterns — reject with file:line if found. Check evidence files exist in .sisyphus/evidence/. Compare deliverables against plan.
   Output: `Must Have [N/N] | Must NOT Have [N/N] | Tasks [N/N] | VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   Run `tsc --noEmit` + `vitest run`. Review all changed files for: `as any`/`@ts-ignore`, empty catches, console.log in prod (stderr is OK), commented-out code, unused imports. Check AI slop: excessive comments, over-abstraction, generic names.
   Output: `Build [PASS/FAIL] | Tests [N pass/N fail] | Files [N clean/N issues] | VERDICT`
 
-- [ ] F3. **Real Manual QA** — `unspecified-high`
+- [x] F3. **Real Manual QA** — `unspecified-high`
   Start the WhatsApp MCP server. Call each tool that was modified: `get_unread_messages`, `search_contacts`, `search_messages`, `list_chats`, `send_message` (preview only). Verify LID/phone merge behavior with real contacts. Save evidence to `.sisyphus/evidence/final-qa/`.
   Output: `Tools Verified [N/N] | Merge Correct [Y/N] | Backward Compat [Y/N] | VERDICT`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   For each task: read "What to do", read actual diff. Verify 1:1 — everything in spec was built, nothing beyond spec. Check "Must NOT do" compliance. Detect cross-task contamination. Flag unaccounted changes.
   Output: `Tasks [N/N compliant] | Contamination [CLEAN/N issues] | VERDICT`
 
@@ -889,7 +889,7 @@ find ~/Code/whatsapp-mcp/src/__tests__ -name '*lid*' | wc -l  # Expected: >= 7
 ```
 
 ### Final Checklist
-- [ ] All "Must Have" present
-- [ ] All "Must NOT Have" absent
-- [ ] All tests pass
-- [ ] Manual QA evidence captured
+- [x] All "Must Have" present
+- [x] All "Must NOT Have" absent
+- [x] All tests pass (177/177)
+- [x] Manual QA evidence captured (.sisyphus/evidence/final-qa/)
