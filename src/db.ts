@@ -415,10 +415,12 @@ export function mergeByCanonicalJid<T>(
   return [...map.values()];
 }
 
-export function getMessageFromMe(chatJid: string, messageId: string): boolean | null {
-  const row = db.prepare(`SELECT from_me FROM messages WHERE chat_jid = ? AND id = ?`).get(chatJid, messageId) as { from_me: number } | undefined;
+export function getMessageFromMe(chatJid: string, messageId: string): { fromMe: boolean; chatJid: string } | null {
+  const jids = getAllJidsFor(chatJid);
+  const placeholders = jids.map(() => "?").join(", ");
+  const row = db.prepare(`SELECT from_me, chat_jid FROM messages WHERE chat_jid IN (${placeholders}) AND id = ?`).get(...jids, messageId) as { from_me: number; chat_jid: string } | undefined;
   if (!row) return null;
-  return row.from_me === 1;
+  return { fromMe: row.from_me === 1, chatJid: row.chat_jid };
 }
 
 // ─── Read Operations ────────────────────────────────────────────────

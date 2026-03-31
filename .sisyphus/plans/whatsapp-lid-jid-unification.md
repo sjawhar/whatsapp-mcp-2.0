@@ -259,7 +259,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 2. Fix `getUnreadChats()` to merge LID/phone chats
+- [x] 2. Fix `getUnreadChats()` to merge LID/phone chats
 
   **What to do**:
   - TDD: Write test first in `src/__tests__/integration/unread-lid.test.ts`:
@@ -332,7 +332,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 3. Fix `searchContacts()` to deduplicate LID/phone entries
+- [x] 3. Fix `searchContacts()` to deduplicate LID/phone entries
 
   **What to do**:
   - TDD: Write test first in `src/__tests__/integration/search-contacts-lid.test.ts`:
@@ -400,7 +400,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 4. Fix `searchMessages()` global + `getRecentMessages()` to canonicalize `chat_jid`
+- [x] 4. Fix `searchMessages()` global + `getRecentMessages()` to canonicalize `chat_jid`
 
   **What to do**:
   - TDD: Write test in `src/__tests__/integration/search-messages-lid.test.ts`:
@@ -459,7 +459,7 @@ Wave FINAL (After ALL tasks — parallel reviews, then user okay):
 
 ---
 
-- [ ] 5. Fix `resolveChatName()` + `getRecipientInfo()` for LID-aware name lookup
+- [x] 5. Fix `resolveChatName()` + `getRecipientInfo()` for LID-aware name lookup
 
   **What to do**:
   - TDD: Write test in `src/__tests__/lid-name-resolution.test.ts`:

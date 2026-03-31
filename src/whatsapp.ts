@@ -185,6 +185,8 @@ let zombieWatchdog: ReturnType<typeof setInterval> | null = null;
 let lastConnectionActivity = Date.now();
 let consecutiveSendFailures = 0;
 let preKeyPruneInterval: ReturnType<typeof setInterval> | null = null;
+let resolveContactsInterval: ReturnType<typeof setInterval> | null = null;
+let resolveContactsInProgress = false;
 let messageNotificationHandler: (() => void) | undefined;
 
 export function setMessageNotificationHandler(callback: (() => void) | undefined): void {
@@ -227,6 +229,21 @@ export function getMyInfo(): { jid: string | null; lidJid: string | null; name: 
     name: null,
     phone: null,
   };
+}
+
+// Auto-resolve wrapper with concurrent execution guard
+async function autoResolveContacts(): Promise<void> {
+  if (resolveContactsInProgress) {
+    return;
+  }
+  resolveContactsInProgress = true;
+  try {
+    await resolveUnknownContacts(false);
+  } catch (err) {
+    console.error('Auto-resolve contacts failed:', err);
+  } finally {
+    resolveContactsInProgress = false;
+  }
 }
 
 export async function resolveUnknownContacts(resync: boolean = false): Promise<{
@@ -603,6 +620,13 @@ export async function initWhatsApp(): Promise<void> {
 
         console.error("Connection ready");
         resolveConnection();
+        // Fire auto-resolve contacts (fire-and-forget)
+        void autoResolveContacts().catch(err => console.error('Auto-resolve failed:', err));
+
+        // Set up periodic auto-resolve (every 30 minutes)
+        if (!resolveContactsInterval) {
+          resolveContactsInterval = setInterval(() => void autoResolveContacts().catch(err => console.error('Auto-resolve failed:', err)), 30 * 60 * 1000);
+        }
       }
     }
 
@@ -764,6 +788,10 @@ export async function closeWhatsApp(): Promise<void> {
   if (preKeyPruneInterval) {
     clearInterval(preKeyPruneInterval);
     preKeyPruneInterval = null;
+  }
+  if (resolveContactsInterval) {
+    clearInterval(resolveContactsInterval);
+    resolveContactsInterval = null;
   }
 
   if (reconnectTimer) {
@@ -1007,6 +1035,7 @@ export async function sendTextMessage(jid: string, text: string, quotedMessageId
   await connectionReady;
   const s = await getSocket();
   const normalJid = toJid(jid);
+  const activeJid = db.getActiveJid(normalJid);
 
   const msgContent: any = { text };
 
@@ -1021,11 +1050,11 @@ export async function sendTextMessage(jid: string, text: string, quotedMessageId
     }
   }
 
-  const sent = await sendMessageWithHealthCheck(s, normalJid, msgContent);
+  const sent = await sendMessageWithHealthCheck(s, activeJid, msgContent);
   return {
     success: true,
     messageId: sent?.key.id,
-    to: normalJid,
+    to: activeJid,
     quotedMessageId: quotedMessageId || null,
   };
 }
@@ -1047,6 +1076,7 @@ export async function sendFileMessage(
   await connectionReady;
   const s = await getSocket();
   const normalJid = toJid(jid);
+  const activeJid = db.getActiveJid(normalJid);
 
   const mime = mimeFromExtension(absolutePath);
   const category = mediaCategoryFromMime(mime);
@@ -1069,11 +1099,11 @@ export async function sendFileMessage(
       break;
   }
 
-  const sent = await sendMessageWithHealthCheck(s, normalJid, messageContent);
+  const sent = await sendMessageWithHealthCheck(s, activeJid, messageContent);
   return {
     success: true,
     messageId: sent?.key.id,
-    to: normalJid,
+    to: activeJid,
     fileType: category,
   };
 }
