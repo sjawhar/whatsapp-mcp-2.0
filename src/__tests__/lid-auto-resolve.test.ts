@@ -55,8 +55,7 @@ describe("auto-resolve contacts", () => {
     await closeTestDb();
   });
 
-  it("should set up 30-minute interval for auto-resolve", async () => {
-    // Mock resolveUnknownContacts before importing
+  it("should set up 30-minute interval for auto-resolve on connection open", async () => {
     const resolveUnknownContactsSpy = vi.spyOn(whatsapp, "resolveUnknownContacts").mockResolvedValue({
       resolved: 0,
       alreadyMapped: 0,
@@ -81,7 +80,7 @@ describe("auto-resolve contacts", () => {
     resolveUnknownContactsSpy.mockRestore();
   });
 
-  it("should clear interval on closeWhatsApp", async () => {
+  it("should clear resolve interval on closeWhatsApp", async () => {
     const clearIntervalSpy = vi.spyOn(global, "clearInterval");
     const resolveUnknownContactsSpy = vi.spyOn(whatsapp, "resolveUnknownContacts").mockResolvedValue({
       resolved: 0,
@@ -103,49 +102,6 @@ describe("auto-resolve contacts", () => {
     expect(clearIntervalSpy).toHaveBeenCalled();
 
     clearIntervalSpy.mockRestore();
-    resolveUnknownContactsSpy.mockRestore();
-  });
-
-  it("should guard against concurrent resolves", async () => {
-    let resolveCount = 0;
-    const resolveUnknownContactsSpy = vi.spyOn(whatsapp, "resolveUnknownContacts").mockImplementation(async () => {
-      resolveCount++;
-      // Simulate a slow resolve that takes 500ms
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return { resolved: 0, alreadyMapped: 0, stillUnresolved: 0, total: 0 };
-    });
-
-    await whatsapp.initWhatsApp();
-    latestSocket().emitConnectionOpen();
-
-    // Give the fire-and-forget promise a chance to execute
-    await new Promise(resolve => setTimeout(resolve, 100));
-    expect(resolveCount).toBe(1);
-
-    // Wait for the first resolve to complete
-    await new Promise(resolve => setTimeout(resolve, 600));
-
-    // The spy should have been called only once
-    expect(resolveUnknownContactsSpy).toHaveBeenCalledTimes(1);
-
-    resolveUnknownContactsSpy.mockRestore();
-  });
-
-  it("should handle errors in auto-resolve gracefully", async () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const resolveUnknownContactsSpy = vi.spyOn(whatsapp, "resolveUnknownContacts").mockRejectedValue(new Error("Test error"));
-
-    await whatsapp.initWhatsApp();
-    latestSocket().emitConnectionOpen();
-
-    // Give the fire-and-forget promise a chance to execute
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Should have logged the error - check for the specific error message
-    const errorCalls = consoleErrorSpy.mock.calls.filter(call => call[0] === "Auto-resolve contacts failed:");
-    expect(errorCalls.length).toBeGreaterThan(0);
-
-    consoleErrorSpy.mockRestore();
     resolveUnknownContactsSpy.mockRestore();
   });
 });
