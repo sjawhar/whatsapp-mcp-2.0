@@ -46,9 +46,13 @@ describe("LID-aware name resolution", () => {
     await setupTestDb();
     seedLidTestData();
 
-    const { initWhatsApp } = await import("../whatsapp.js");
-    closeWhatsApp = await initWhatsApp();
-  });
+    const whatsapp = await import("../whatsapp.js");
+    closeWhatsApp = whatsapp.closeWhatsApp;
+    await whatsapp.initWhatsApp();
+    const socket = mockState.sockets.at(-1);
+    if (!socket) throw new Error("Expected fake Baileys socket");
+    socket.emitConnectionOpen();
+  })
 
   afterAll(async () => {
     if (closeWhatsApp) {

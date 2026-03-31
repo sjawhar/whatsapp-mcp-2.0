@@ -783,7 +783,7 @@ export async function closeWhatsApp(): Promise<void> {
  * Resolve a chat name. For groups without a name, fetch metadata from WhatsApp.
  * Like the Go project's GetChatName — resolve inline when needed.
  */
-async function resolveChatName(jid: string): Promise<string | null> {
+export async function resolveChatName(jid: string): Promise<string | null> {
   // Check if we already have a name in the DB
   const existing = db.getChatName(jid);
   if (existing) return existing;
@@ -981,9 +981,25 @@ export async function deleteMessage(jid: string, messageId: string): Promise<Rec
 
 export function getRecipientInfo(jid: string): { jid: string; name: string | null; phone: string } {
   const normalJid = toJid(jid);
-  const name = db.getContactName(normalJid);
-  const phone = fromJid(normalJid);
-  return { jid: normalJid, name, phone };
+  const canonicalJid = db.getCanonicalJid(normalJid);
+  let name = db.getContactName(canonicalJid);
+
+  // If name not found on canonical JID, check other JID variants
+  if (!name) {
+    const allJids = db.getAllJidsFor(canonicalJid);
+    for (const otherJid of allJids) {
+      if (otherJid !== canonicalJid) {
+        const otherName = db.getContactName(otherJid);
+        if (otherName) {
+          name = otherName;
+          break;
+        }
+      }
+    }
+  }
+
+  const phone = fromJid(canonicalJid);
+  return { jid: canonicalJid, name, phone };
 }
 
 
