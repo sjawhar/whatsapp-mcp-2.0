@@ -712,12 +712,14 @@ export function saveTranscription(chatJid: string, messageId: string, transcript
 }
 
 export function getLastMessageKey(jid: string): { id: string; fromMe: boolean; remoteJid: string; timestamp: number } | null {
+  const jids = getAllJidsFor(jid);
+  const placeholders = jids.map(() => "?").join(", ");
   const row = db.prepare(`
     SELECT id, from_me, chat_jid, timestamp FROM messages
-    WHERE chat_jid = ?
+    WHERE chat_jid IN (${placeholders})
     ORDER BY timestamp DESC
     LIMIT 1
-  `).get(jid) as { id: string; from_me: number; chat_jid: string; timestamp: number } | undefined;
+  `).get(...jids) as { id: string; from_me: number; chat_jid: string; timestamp: number } | undefined;
 
   if (!row) return null;
   return { id: row.id, fromMe: row.from_me === 1, remoteJid: row.chat_jid, timestamp: row.timestamp };

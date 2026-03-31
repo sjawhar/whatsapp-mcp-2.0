@@ -974,9 +974,12 @@ export async function deleteChat(jid: string): Promise<Record<string, unknown>> 
     throw err;
   }
 
-  // Clean up local database
-  db.deleteChatMessages(normalJid);
-  db.deleteChat(normalJid);
+  // Clean up local database — remove both JID variants
+  const allJids = db.getAllJidsFor(normalJid);
+  for (const j of allJids) {
+    db.deleteChatMessages(j);
+    db.deleteChat(j);
+  }
 
   return { success: true, jid: normalJid };
 }
@@ -986,23 +989,26 @@ export async function deleteMessage(jid: string, messageId: string): Promise<Rec
   const s = await getSocket();
   const normalJid = toJid(jid);
 
-  // Look up from_me to build the correct WAMessageKey for deletion
-  const fromMe = db.getMessageFromMe(normalJid, messageId);
-  if (fromMe === null) {
+  // Look up from_me across all JID variants to build the correct WAMessageKey
+  const msgInfo = db.getMessageFromMe(normalJid, messageId);
+  if (msgInfo === null) {
     throw new Error(`Message ${messageId} not found in chat ${normalJid}`);
   }
 
+  // Use the actual chat_jid where the message was found for the API call
+  const actualJid = msgInfo.chatJid;
+
   // Delete on WhatsApp servers first — if this fails, local DB stays intact
-  await sendMessageWithHealthCheck(s, normalJid, {
+  await sendMessageWithHealthCheck(s, actualJid, {
     delete: {
-      remoteJid: normalJid,
-      fromMe,
+      remoteJid: actualJid,
+      fromMe: msgInfo.fromMe,
       id: messageId,
     },
   });
 
-  // Remove from local database
-  db.deleteMessage(normalJid, messageId);
+  // Remove from local database using the actual chat_jid
+  db.deleteMessage(actualJid, messageId);
 
   return { success: true, jid: normalJid, messageId };
 }
