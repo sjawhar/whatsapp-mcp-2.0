@@ -1,0 +1,8 @@
+[
+  {
+    "jid": "50763345671@s.whatsapp.net",
+    "name": "Panama Equity",
+    "phone": "50763345671",
+    "isGroup": false
+  }
+]

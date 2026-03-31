@@ -9,7 +9,12 @@
     "ses_2b9dcd0f3ffe0DQhgJUdy376ct",
     "ses_2b9dd12c0ffeWPHUZKO63SIrY0",
     "ses_2b9dcf916ffeR4COM3eHxHheOK",
-    "ses_2b9dcc583ffeWO9Fb6PKFExRR3"
+    "ses_2b9dcc583ffeWO9Fb6PKFExRR3",
+    "ses_2b9cc9e72ffeoLNJ7eZYvQn7ct",
+    "ses_2b9cd1470ffewbLAdQ9qhnjnzQ",
+    "ses_2b9c913d9ffeBaeTt14YOrQGvC",
+    "ses_2b9cc4efeffeFMK3WAajzuWYq2",
+    "ses_2b9c35449ffeXSYJMPUYdwzO01"
   ],
   "plan_name": "whatsapp-lid-jid-unification",
   "agent": "atlas",
@@ -27,9 +32,9 @@
       "task_key": "final-wave:f1",
       "task_label": "F1",
       "task_title": "**Plan Compliance Audit** — `oracle`",
-      "session_id": "ses_2b9dd12c0ffeWPHUZKO63SIrY0",
-      "agent": "oracle",
-      "updated_at": "2026-03-31T23:06:45.728Z"
+      "session_id": "ses_2b9c35449ffeXSYJMPUYdwzO01",
+      "agent": "explore",
+      "updated_at": "2026-03-31T23:31:58.336Z"
     }
   }
 }

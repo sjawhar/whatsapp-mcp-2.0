@@ -1,0 +1,39 @@
+{
+  "totalChatsWithUnread": 1,
+  "chats": [
+    {
+      "jid": "50763345671@s.whatsapp.net",
+      "name": "Panama Equity",
+      "unreadCount": 3,
+      "recentMessages": [
+        {
+          "id": "phone-msg-1",
+          "from": "me",
+          "fromMe": true,
+          "type": "text",
+          "text": "Sure, sending now",
+          "timestamp": "2023-11-14 22:14:10 UTC",
+          "hasMedia": false
+        },
+        {
+          "id": "lid-msg-1",
+          "from": "Panama Equity",
+          "fromMe": false,
+          "type": "text",
+          "text": "Looking at the apartment tomorrow",
+          "timestamp": "2023-11-14 22:15:00 UTC",
+          "hasMedia": false
+        },
+        {
+          "id": "lid-msg-2",
+          "from": "Panama Equity",
+          "fromMe": false,
+          "type": "text",
+          "text": "Can you send the deposit?",
+          "timestamp": "2023-11-14 22:15:10 UTC",
+          "hasMedia": false
+        }
+      ]
+    }
+  ]
+}

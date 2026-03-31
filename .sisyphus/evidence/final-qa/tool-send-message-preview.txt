@@ -1,0 +1,9 @@
+{
+  "status": "confirmation_required",
+  "to": "Panama Equity",
+  "phone": "50763345671",
+  "jid": "50763345671@s.whatsapp.net",
+  "message": "Test message",
+  "quotedMessageId": null,
+  "instruction": "Show the user who this message will be sent to, their number, and the message content. Ask them to confirm before calling send_message again with confirmed=true."
+}

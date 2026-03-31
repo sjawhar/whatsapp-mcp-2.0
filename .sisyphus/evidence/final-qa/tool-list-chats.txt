@@ -1,0 +1,16 @@
+[
+  {
+    "jid": "50763345671@s.whatsapp.net",
+    "name": "Panama Equity",
+    "unreadCount": 3,
+    "lastMessageTime": 1700000110,
+    "isGroup": false
+  },
+  {
+    "jid": "999999999@lid",
+    "name": "Unknown Broker",
+    "unreadCount": 0,
+    "lastMessageTime": 1700000000,
+    "isGroup": false
+  }
+]

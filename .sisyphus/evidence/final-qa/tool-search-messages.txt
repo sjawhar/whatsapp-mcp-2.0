@@ -1,0 +1,12 @@
+[
+  {
+    "id": "lid-msg-1",
+    "from": "Panama Equity",
+    "fromMe": false,
+    "type": "text",
+    "text": "Looking at the apartment tomorrow",
+    "timestamp": "2023-11-14 22:15:00 UTC",
+    "hasMedia": false,
+    "chat": "50763345671@s.whatsapp.net"
+  }
+]
