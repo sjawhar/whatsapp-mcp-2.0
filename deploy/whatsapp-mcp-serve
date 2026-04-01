@@ -18,5 +18,6 @@ WHISPER_API_URL=$(echo "$SECRETS" | grep '^WHISPER_API_URL=' | cut -d= -f2- || t
 export WHISPER_API_KEY
 WHISPER_API_KEY=$(echo "$SECRETS" | grep '^WHISPER_API_KEY=' | cut -d= -f2- || true)
 
-# Launch the WhatsApp MCP server via mise (node is managed by mise, not on systemd PATH)
-exec npx --yes @sjawhar/whatsapp-mcp@latest --http --port ${WHATSAPP_MCP_PORT:-3456}
+# Launch the WhatsApp MCP server
+# Use mise exec to get node/npx on PATH (mise shims hit 'argument list too long' in systemd)
+exec $MISE exec node -- npx --yes @sjawhar/whatsapp-mcp@latest --http --port ${WHATSAPP_MCP_PORT:-3456}
