@@ -8,6 +8,9 @@ Type=simple
 ExecStart=%h/Code/whatsapp-mcp/deploy/whatsapp-mcp-serve
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PATH=%h/.local/share/mise/shims:%h/.mise/shims:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target
