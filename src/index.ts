@@ -14,6 +14,7 @@ import { registerTools } from "./tools.js";
 import { acquireWhatsAppLock, releaseWhatsAppLock } from "./lock.js";
 import { LOCK_FILE, DATA_DIR } from "./paths.js";
 import { createHttpServer, type HttpServerController } from "./http-server.js";
+import { startConnectProxy } from "./connect-proxy.js";
 import {
   NEW_MESSAGES_RESOURCE_URI,
   createResourceSubscriptionStore,
@@ -24,12 +25,14 @@ console.error(`Data directory: ${DATA_DIR}`);
 
 type CliOptions = {
   http: boolean;
+  connect: boolean;
   port: number;
   host: string;
 };
 
 function parseCliOptions(argv: string[]): CliOptions {
   let http = false;
+  let connect = false;
   let port = 3456;
   let host = "0.0.0.0";
 
@@ -38,6 +41,11 @@ function parseCliOptions(argv: string[]): CliOptions {
 
     if (arg === "--http") {
       http = true;
+      continue;
+    }
+
+    if (arg === "--connect") {
+      connect = true;
       continue;
     }
 
@@ -80,12 +88,33 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
   }
 
-  return { http, port, host };
+  if (http && connect) {
+    throw new Error("--http and --connect cannot be used together");
+  }
+
+  return { http, connect, port, host };
 }
 
 async function main() {
   console.error("Starting WhatsApp MCP Server...");
   const options = parseCliOptions(process.argv.slice(2));
+
+  if (options.connect) {
+    const url = process.env.WHATSAPP_MCP_URL;
+    const apiKey = process.env.MCP_API_KEY || process.env.WHATSAPP_MCP_SECRET;
+
+    if (!url) {
+      throw new Error("WHATSAPP_MCP_URL is required in --connect mode");
+    }
+
+    if (!apiKey) {
+      throw new Error("MCP_API_KEY is required in --connect mode");
+    }
+
+    await startConnectProxy(url, apiKey);
+    return;
+  }
+
   let stdioServer: McpServer | undefined;
   let httpController: HttpServerController | undefined;
   let stdioSessionId: string | undefined;
