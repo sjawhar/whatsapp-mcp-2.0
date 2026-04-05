@@ -75,5 +75,5 @@ jobs:
           else
             echo "Publishing v${VERSION}"
             npm run build
-            npm publish --provenance --access public
+            npx npm@latest publish --provenance --access public
           fi
