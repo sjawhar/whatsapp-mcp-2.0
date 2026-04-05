@@ -774,6 +774,37 @@ export async function initWhatsApp(): Promise<void> {
 
       if (newMsgs.length > 0) {
         messageNotificationHandler?.();
+
+        // Publish to Envoy for cross-session real-time routing
+        const envoyUrl = process.env.ENVOY_URL;
+        if (envoyUrl) {
+          for (const msg of newMsgs) {
+            const chatJid = msg.key.remoteJid;
+            if (!chatJid) continue;
+            const canonicalChat = db.getCanonicalJid(chatJid);
+            const phone = myJid ? fromJid(myJid.replace(/:\d+@/, "@")) : "unknown";
+            const pushName = (msg as any).pushName;
+            const text = msg.message?.conversation
+              || msg.message?.extendedTextMessage?.text
+              || (msg.message ? `[${Object.keys(msg.message)[0]}]` : "");
+            fetch(`${envoyUrl}/v1/messages/publish`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                source: "whatsapp",
+                topic: `notifications.whatsapp.${phone}.${canonicalChat}.message`,
+                message: JSON.stringify({
+                  kind: "message",
+                  jid: canonicalChat,
+                  sender: msg.key.fromMe ? phone : (pushName || chatJid),
+                  text,
+                  message_id: msg.key.id,
+                  timestamp: Number(msg.messageTimestamp || 0),
+                }),
+              }),
+            }).catch(() => {}); // best-effort, don't break MCP flow
+          }
+        }
       }
     }
 
