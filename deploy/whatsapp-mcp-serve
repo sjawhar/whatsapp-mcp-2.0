@@ -18,6 +18,9 @@ WHISPER_API_URL=$(echo "$SECRETS" | grep '^WHISPER_API_URL=' | cut -d= -f2- || t
 export WHISPER_API_KEY
 WHISPER_API_KEY=$(echo "$SECRETS" | grep '^WHISPER_API_KEY=' | cut -d= -f2- || true)
 
+# Envoy listener for cross-session message routing (runs on every machine)
+export ENVOY_URL="http://localhost:9020"
+
 # Launch the globally-installed whatsapp-mcp binary
 # npm global prefix is ~/.npm-global (custom npmrc); mise exec provides Node runtime
 exec $MISE exec node -- "$HOME/.npm-global/bin/whatsapp-mcp" --http --port ${WHATSAPP_MCP_PORT:-3456}
