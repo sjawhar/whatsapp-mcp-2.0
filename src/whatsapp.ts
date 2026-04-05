@@ -664,6 +664,10 @@ export async function initWhatsApp(): Promise<void> {
       for (const msg of syncMessages) {
         const jid = msg.key.remoteJid;
         if (!jid) continue;
+        const altJid = (msg.key as any).remoteJidAlt as string | undefined;
+        if (jid.endsWith("@lid") && altJid?.endsWith("@s.whatsapp.net")) {
+          db.saveJidMapping(jid, altJid);
+        }
         if (!byJid.has(jid)) byJid.set(jid, []);
         byJid.get(jid)!.push(msg);
       }
@@ -747,6 +751,13 @@ export async function initWhatsApp(): Promise<void> {
       for (const msg of newMsgs) {
         const jid = msg.key.remoteJid;
         if (!jid) continue;
+
+        // Save LID↔phone mapping from message metadata — this is how we learn
+        // new mappings without needing resolve_contacts
+        const altJid = (msg.key as any).remoteJidAlt as string | undefined;
+        if (jid.endsWith("@lid") && altJid?.endsWith("@s.whatsapp.net")) {
+          db.saveJidMapping(jid, altJid);
+        }
 
         // pushName is the sender's WhatsApp display name — use it to populate contacts
         const pushName = (msg as any).pushName;
