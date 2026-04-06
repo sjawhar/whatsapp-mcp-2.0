@@ -8,6 +8,7 @@ import { closeTestDb, seedTestDb, setupTestDb } from "./helpers/test-db.js";
 import { createHttpServer, type HttpServerController } from "../http-server.js";
 import {
   NEW_MESSAGES_RESOURCE_URI,
+  chatResourceUri,
   createResourceSubscriptionStore,
   registerResourceSubscriptionHandlers,
   registerResources,
@@ -63,6 +64,55 @@ describe("MCP resources and subscriptions", () => {
       expect(payload.length).toBeGreaterThan(0);
       expect(payload.length).toBeLessThanOrEqual(10);
       expect(payload[0]).toEqual(expect.objectContaining({ chat: "15550001111@s.whatsapp.net" }));
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+      store.removeSession(sessionId);
+    }
+  });
+
+  it("builds canonical per-chat URIs and reads messages for a conversation resource", async () => {
+    const { seedLidTestData } = await import("./helpers/test-db.js");
+    seedLidTestData();
+
+    const store = createResourceSubscriptionStore();
+    const sessionId = "in-memory-session";
+    const server = new McpServer(
+      { name: "whatsapp-test", version: "1.0.0" },
+      { capabilities: { resources: { subscribe: true, listChanged: true } } }
+    );
+    registerResources(server);
+    store.registerSession(sessionId, (uri) => server.server.sendResourceUpdated({ uri }));
+    registerResourceSubscriptionHandlers(server, sessionId, store);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "resource-chat-client", version: "1.0.0" });
+
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+      expect(chatResourceUri("169509591765046@lid")).toBe("whatsapp://chats/50763345671/messages");
+      expect(chatResourceUri("50763345671@s.whatsapp.net")).toBe("whatsapp://chats/50763345671/messages");
+
+      const listed = await client.listResources();
+      expect(listed.resources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ uri: "whatsapp://chats/15550001111/messages" }),
+          expect.objectContaining({ uri: "whatsapp://chats/50763345671/messages" }),
+        ])
+      );
+
+      const resource = await client.readResource({ uri: "whatsapp://chats/50763345671/messages" });
+      const firstContent = resource.contents[0];
+      const payloadText = firstContent && "text" in firstContent ? firstContent.text : "[]";
+      const payload = JSON.parse(payloadText) as Array<Record<string, unknown>>;
+
+      expect(payload.map((message) => message.text)).toEqual(
+        expect.arrayContaining([
+          "Can you send the deposit?",
+          "Looking at the apartment tomorrow",
+          "Sure, sending now",
+        ])
+      );
     } finally {
       await Promise.all([client.close(), server.close()]);
       store.removeSession(sessionId);

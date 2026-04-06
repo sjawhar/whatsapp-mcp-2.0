@@ -187,9 +187,9 @@ let consecutiveSendFailures = 0;
 let preKeyPruneInterval: ReturnType<typeof setInterval> | null = null;
 let resolveContactsInterval: ReturnType<typeof setInterval> | null = null;
 let resolveContactsInProgress = false;
-let messageNotificationHandler: (() => void) | undefined;
+let messageNotificationHandler: ((chatJids: string[]) => void) | undefined;
 
-export function setMessageNotificationHandler(callback: (() => void) | undefined): void {
+export function setMessageNotificationHandler(callback: ((chatJids: string[]) => void) | undefined): void {
   messageNotificationHandler = callback;
 }
 
@@ -748,6 +748,7 @@ export async function initWhatsApp(): Promise<void> {
     // ─── Message Events ─────────────────────────────────────
     if (events["messages.upsert"]) {
       const { messages: newMsgs } = events["messages.upsert"];
+      const inboundChatJids = new Set<string>();
       for (const msg of newMsgs) {
         const jid = msg.key.remoteJid;
         if (!jid) continue;
@@ -770,11 +771,17 @@ export async function initWhatsApp(): Promise<void> {
         const msgTs = Number(msg.messageTimestamp || 0);
         const chatName = (!msg.key.fromMe && !jid.endsWith("@g.us") && pushName) ? pushName : null;
         db.upsertChat(jid, chatName, msgTs, msg.key.fromMe ? null : undefined);
+
+        if (!msg.key.fromMe) {
+          inboundChatJids.add(jid);
+        }
+      }
+
+      if (inboundChatJids.size > 0) {
+        messageNotificationHandler?.([...inboundChatJids]);
       }
 
       if (newMsgs.length > 0) {
-        messageNotificationHandler?.();
-
         // Publish to Envoy for cross-session real-time routing
         const envoyUrl = process.env.ENVOY_URL;
         if (envoyUrl) {

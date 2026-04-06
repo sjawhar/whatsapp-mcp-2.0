@@ -1,8 +1,22 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { getRecentMessages } from "./db.js";
+import { getCanonicalJid, getChats, getMessages, getRecentMessages, searchContacts } from "./db.js";
+import { fromJid, toJid } from "./utils.js";
 
 export const NEW_MESSAGES_RESOURCE_URI = "whatsapp://messages/new";
+const CHAT_MESSAGES_TEMPLATE = "whatsapp://chats/{contact}/messages";
+
+type ChatListEntry = {
+  jid: string;
+  name?: string | null;
+  isGroup?: boolean;
+};
+
+type ContactSearchEntry = {
+  jid: string;
+  phone?: string | null;
+  isGroup?: boolean;
+};
 
 type ResourceUpdateSender = (uri: string) => Promise<void> | void;
 
@@ -81,12 +95,63 @@ export function createResourceSubscriptionStore(): ResourceSubscriptionStore {
   };
 }
 
+export function chatResourceUri(jid: string): string {
+  const canonical = getCanonicalJid(jid);
+  const phone = fromJid(canonical);
+  return `whatsapp://chats/${phone}/messages`;
+}
+
 export function registerResources(server: McpServer): void {
   server.resource(
     "new_messages",
     NEW_MESSAGES_RESOURCE_URI,
     async (uri) => {
       const messages = getRecentMessages(10);
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(messages),
+          },
+        ],
+      };
+    }
+  );
+
+  server.resource(
+    "chat_messages",
+    new ResourceTemplate(CHAT_MESSAGES_TEMPLATE, {
+      list: async () => {
+        const chats = getChats(undefined, 50) as ChatListEntry[];
+        return {
+          resources: chats
+            .filter((chat) => !chat.isGroup)
+            .map((chat) => {
+              const phone = fromJid(getCanonicalJid(String(chat.jid)));
+              return {
+                uri: chatResourceUri(String(chat.jid)),
+                name: `${chat.name || phone} messages`,
+              };
+            }),
+        };
+      },
+      complete: {
+        contact: async (value: string) => {
+          const contacts = searchContacts(value) as ContactSearchEntry[];
+          return [...new Set(
+            contacts
+              .filter((contact) => !contact.isGroup)
+              .map((contact) => String(contact.phone || fromJid(getCanonicalJid(String(contact.jid)))))
+              .filter(Boolean)
+          )];
+        },
+      },
+    }),
+    { mimeType: "application/json" },
+    async (uri, { contact }) => {
+      const jid = toJid(String(contact));
+      const messages = getMessages(jid, 20);
       return {
         contents: [
           {

@@ -17,6 +17,7 @@ import { createHttpServer, type HttpServerController } from "./http-server.js";
 import { startConnectProxy } from "./connect-proxy.js";
 import {
   NEW_MESSAGES_RESOURCE_URI,
+  chatResourceUri,
   createResourceSubscriptionStore,
   registerResourceSubscriptionHandlers,
   registerResources,
@@ -124,8 +125,13 @@ async function main() {
   let shuttingDown = false;
   const resourceSubscriptions = createResourceSubscriptionStore();
   let debouncedNotificationTimer: NodeJS.Timeout | undefined;
+  let pendingChatJids = new Set<string>();
 
-  setMessageNotificationHandler(() => {
+  setMessageNotificationHandler((chatJids: string[]) => {
+    for (const jid of chatJids) {
+      pendingChatJids.add(jid);
+    }
+
     if (debouncedNotificationTimer) {
       clearTimeout(debouncedNotificationTimer);
     }
@@ -133,6 +139,10 @@ async function main() {
     debouncedNotificationTimer = setTimeout(() => {
       debouncedNotificationTimer = undefined;
       void resourceSubscriptions.notifyResourceUpdated(NEW_MESSAGES_RESOURCE_URI);
+      for (const jid of pendingChatJids) {
+        void resourceSubscriptions.notifyResourceUpdated(chatResourceUri(jid));
+      }
+      pendingChatJids = new Set<string>();
     }, 500);
   });
 
@@ -158,6 +168,7 @@ async function main() {
       clearTimeout(debouncedNotificationTimer);
       debouncedNotificationTimer = undefined;
     }
+    pendingChatJids = new Set<string>();
     setMessageNotificationHandler(undefined);
 
     await closeWhatsApp();
