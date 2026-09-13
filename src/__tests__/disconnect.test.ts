@@ -178,17 +178,47 @@ describe("disconnect handling", () => {
     expect(errorSpy.mock.calls.flat().join(" ")).toContain("Unknown disconnect code");
   });
 
-  it("stops reconnecting after MAX_RECONNECT_ATTEMPTS", async () => {
+  it("does not spend the reconnect budget while waiting for a QR scan", async () => {
+    // An unscanned QR expires on its own and closes the socket with a 408. A
+    // daemon left at the pairing screen must keep offering codes instead of
+    // exhausting its budget and going quiet while still running.
     process.env.MAX_RECONNECT_ATTEMPTS = "2";
+    await setupTestDb();
+    seedTestDb();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const whatsapp = await import("../whatsapp.js");
+    await whatsapp.initWhatsApp();
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      latestSocket().emitConnectionClose(408);
+    }
+
+    expect(whatsapp.getReconnectAttempts()).toBe(0);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    closeTestDb();
+  });
+
+  it("exits once a paired session exhausts MAX_RECONNECT_ATTEMPTS", async () => {
+    process.env.MAX_RECONNECT_ATTEMPTS = "2";
+    await setupTestDb();
+    seedTestDb();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const whatsapp = await importWhatsAppResolved();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const whatsapp = await import("../whatsapp.js");
+    await whatsapp.initWhatsApp();
+    latestSocket().emitConnectionOpen();
 
     await whatsapp.handleDisconnect(428, null);
     await whatsapp.handleDisconnect(428, null);
     await whatsapp.handleDisconnect(428, null);
 
-    expect(vi.getTimerCount()).toBe(1);
     expect(errorSpy.mock.calls.flat().join(" ")).toContain("Fatal");
+    // Staying alive with a dead connection reads as healthy to a supervisor.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    closeTestDb();
   });
 
   it("successful connection resets reconnect attempt counter to zero", async () => {
@@ -197,6 +227,7 @@ describe("disconnect handling", () => {
 
     const whatsapp = await import("../whatsapp.js");
     await whatsapp.initWhatsApp();
+    latestSocket().emitConnectionOpen();
 
     latestSocket().emitConnectionClose(428);
     expect(whatsapp.getReconnectAttempts()).toBe(1);
