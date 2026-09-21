@@ -180,6 +180,10 @@ let connectionReady: Promise<void>;
 let resolveConnection: () => void;
 let rejectConnection: (err: Error) => void;
 let reconnectAttempts = 0;
+// True until a pairing completes. While the daemon is still showing QR codes,
+// WhatsApp closes each unscanned attempt with a 408, which is the socket
+// waiting to be scanned rather than a connection that is failing.
+let awaitingPairing = true;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let zombieWatchdog: ReturnType<typeof setInterval> | null = null;
 let lastConnectionActivity = Date.now();
@@ -334,13 +338,21 @@ function resetConnectionPromise() {
 }
 
 function scheduleReconnect(delayMs: number): void {
-  reconnectAttempts++;
-  if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-    console.error(
-      `Fatal: reached MAX_RECONNECT_ATTEMPTS (${MAX_RECONNECT_ATTEMPTS}). ` +
-      "Stopping reconnect attempts."
-    );
-    return;
+  // An unscanned QR expires on a timer and closes the socket, so a daemon
+  // waiting to be paired would otherwise burn its whole budget in minutes and
+  // stop offering codes. Retry without limit until a pairing succeeds.
+  if (!awaitingPairing) {
+    reconnectAttempts++;
+    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      console.error(
+        `Fatal: reached MAX_RECONNECT_ATTEMPTS (${MAX_RECONNECT_ATTEMPTS}). ` +
+        "Exiting so the supervisor restarts a process that can reconnect."
+      );
+      // Staying alive here leaves the MCP server answering over a WhatsApp
+      // connection that will never come back, which every supervisor reads as
+      // healthy. Exiting non-zero is the only honest report.
+      process.exit(1);
+    }
   }
 
   if (reconnectTimer) {
@@ -528,6 +540,9 @@ export async function initWhatsApp(): Promise<void> {
   // it causes Baileys to enter AwaitingInitialSync for 20s before timing out —
   // which leads to 408 disconnects and an endless reconnect loop.
   const isFirstPairing = !state.creds.registered;
+  // Credentials on disk mean this process is reconnecting a real session, not
+  // waiting at the QR screen, so the reconnect budget applies again.
+  awaitingPairing = isFirstPairing;
 
   // Wrap keys.set so every auth-state write is tracked and can be awaited
   // before socket close — preventing stale session files on disk.
@@ -594,6 +609,7 @@ export async function initWhatsApp(): Promise<void> {
       if (connection === "open") {
         console.error("WhatsApp connected successfully!");
         reconnectAttempts = 0;
+        awaitingPairing = false;
         lastConnectionActivity = Date.now();
         consecutiveSendFailures = 0;
 

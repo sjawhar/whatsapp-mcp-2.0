@@ -144,16 +144,18 @@ describe("integration failures: connection handling", () => {
     expect(errorSpy.mock.calls.flat().join(" ")).toContain("Reconnecting in 4s");
   });
 
-  it("stops reconnect scheduling after MAX_RECONNECT_ATTEMPTS cap", async () => {
+  it("exits after the MAX_RECONNECT_ATTEMPTS cap instead of idling", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 
     latestSocket().emitConnectionClose(428);
     latestSocket().emitConnectionClose(428);
     latestSocket().emitConnectionClose(428);
 
-    const logText = errorSpy.mock.calls.flat().join(" ");
-    expect(logText).toContain("MAX_RECONNECT_ATTEMPTS (2)");
-    expect(logText).toContain("Stopping reconnect attempts");
+    expect(errorSpy.mock.calls.flat().join(" ")).toContain("MAX_RECONNECT_ATTEMPTS (2)");
+    // A process that keeps serving MCP over a connection it will never restore
+    // looks healthy to its supervisor; exiting is what gets it restarted.
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("detects zombie socket after silence timeout", async () => {
